@@ -780,7 +780,7 @@ app.get('/getMappingData', async (req, res) => {
             switchgear => switchgear.cbs && switchgear.cbs.some(cb => cb.cbname === cbName)
         );
         if (!matchingSwitchgear) {
-            return res.status(200).json({ message: `No CB's planshudule found with name '${cbName}' in the switchgears.`,count:0 });
+            return res.status(200).json({ message: `No CB's planshudule found with name '${cbName}' in the switchgears.`, count: 0 });
         }
 
         let allCBsTaskID = []
@@ -831,7 +831,7 @@ app.get('/switchgear/:id/:switchgearId', async (req, res) => {
 
         // Ensure the 'Item' exists in the result from DynamoDB (the table is expected to return an 'Item' object)
         if (!result.Item) {
-            return res.status(404).json({ error: "Customer don't mapped yet"});
+            return res.status(404).json({ error: "Customer don't mapped yet" });
         }
 
         // Check if the switchgears array exists and find the specific switchgear by name
@@ -913,13 +913,13 @@ app.put('/switchgear/:id/:switchgearId/:taskId', async (req, res) => {
         if (!taskToUpdate) {
             return res.status(404).json({ error: `No CB found with taskId '${taskId}' in the specified switchgear.` });
         }
-                
+
         let updated = false;
         const today = new Date().toISOString().split('T')[0]; // Today's date in YYYY-MM-DD format
 
         // Update 'fromDate' if it matches today's date
         if (fromDate) {
-            
+
             if (taskToUpdate.planstartDate >= today) {
                 taskToUpdate.planstartDate = fromDate;
                 updated = true;
@@ -1020,6 +1020,129 @@ app.delete('/switchgear/:id/:switchgearId/:taskId', async (req, res) => {
         return res.status(500).json({ error: 'Failed to delete Circuit Breaker' });
     }
 });
+
+app.get('/preservice/:table/:customer_id', async (req, res) => {
+    const { table, customer_id } = req.params;
+    const { planType, scheduleType } = req.query; // Added scheduleType
+    const tableName = "Preventive_mappping_Storage";
+    const locationTableName = "switchgearConfig_Store"; // Table containing the location information
+
+
+    // Validate inputs
+    if (!table || !customer_id || !planType) {
+        return res.status(400).json({ error: "Both 'customer_id' and 'planType' are required" });
+    }
+
+    try {
+        // Fetch customer data from DynamoDB
+        const params = {
+            TableName: tableName,
+            Key: { customer_id },
+        };
+        const result = await ddb.get(params).promise();
+
+        // Check if customer exists
+        if (!result.Item) {
+            return res.status(404).json({ error: 'Customer not found' });
+        }
+
+        const switchgears = result.Item.switchgears || [];
+        let response = {
+            customer_id,
+            switchgears: [],
+        };
+        // const locationParams = {
+        //     TableName: locationTableName,
+        //     KeyConditionExpression: 'customer_id = :customer_id',
+        //     ExpressionAttributeValues: {
+        //         ':customer_id': customer_id,
+        //     }
+        // };
+        // const locationResult = await ddb.query(locationParams).promise();
+        
+        // const locationMapping = {}; // Map cbname to location
+
+        // Populate the location mapping from the location table result
+
+        // locationResult.Items.forEach((item) => {
+        //     // Iterate through the configswitchgears array within each item
+        //     item.configswitchgears.forEach((switchgear) => {
+        //         // Now you can access each switchgear and its properties
+        //         // If you want to iterate over configuredCBs inside each switchgear
+        //         switchgear.configuredCBs.forEach((cb) => {
+        //             // Access each CB here
+        //             console.log(cb.location);
+        //         });
+        //     });
+        // });
+        // locationResult.Items.forEach() => {
+            
+        //     locationMapping[item.name] = item.location; // Assuming 'name' is cbname and 'location' is the location
+        // });
+        // Process each switchgear
+        switchgears.forEach((switchgear) => {
+            const cbs = switchgear.cbs || [];
+
+            let filteredCbs;
+
+            if (planType === 'Totalplan') {
+                // Keep all CBs for Totalplan
+                filteredCbs = cbs.map((cb) => ({
+                    cbname: cb.cbname,
+                    pms_des: cb.pms_des,
+                    planshudule: cb.planshudule,
+                    cretionDate: cb.creationDate,
+                    planEndDate: cb.planEndDate,
+                    taskId: cb.taskId,
+                    planstartDate: cb.planstartDate,
+                    totalPlan: calculateDays(cb.planEndDate, cb.planstartDate),
+                    completePlan: calculateDays(new Date().toISOString().split('T')[0], cb.planstartDate),
+                    pendingPlan: calculateDays(cb.planEndDate, new Date().toISOString().split('T')[0]),
+                    // location: locationMapping[cb.name] || 'Unknown', // Fetch location for each cb
+                    location: 'Unknown', // Fetch location for each cb
+                }));
+            } else if (planType === 'Individual' && scheduleType) {
+                // Filter CBs based on the schedule type
+                filteredCbs = cbs
+                    .filter((cb) => cb.planshudule === scheduleType)
+                    .map((cb) => ({
+                        cbname: cb.cbname,
+                        pms_des: cb.pms_des,
+                        planshudule: cb.planshudule,
+                        cretionDate: cb.creationDate,
+                        planEndDate: cb.planEndDate,
+                        taskId: cb.taskId,
+                        planstartDate: cb.planstartDate,
+                    }));
+            } else {
+                filteredCbs = [];
+            }
+
+            if (filteredCbs.length > 0) {
+                response.switchgears.push({
+                    switchgearId: switchgear.switchgearId,
+                    cbs: filteredCbs,
+                });
+            }
+        });
+
+        // Return the response
+        return res.status(200).json(response);
+    } catch (err) {
+        console.error("Error:", err);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+// Helper function to calculate the difference in days
+function calculateDays(date1, date2) {
+    const d1 = new Date(date1);
+    const d2 = new Date(date2);
+    const diffInMs = d1 - d2;
+    return Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
+}
+
+
 
 const PORT = 4000;
 app.listen(PORT, () => {
