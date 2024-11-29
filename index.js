@@ -795,7 +795,7 @@ app.get('/getMappingData', async (req, res) => {
         const planshudules = [...new Set(matchingCBs.map(cb => cb.planshudule))];
         const today = new Date().toISOString().split("T")[0];
         const cbCreatedTodayCount = matchingCBs.filter(cb =>{
-            cb.cretionDate.startsWith(today).length;    
+            cb.creationDate.startsWith(today).length;    
         })
     
         return res.status(200).json({
@@ -1056,7 +1056,7 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
 
     if (Object.keys(extraParams).length > 0) {
         return res.status(400).json({
-            error: "Unexpected query parameters",
+            error: "Unexpected parameters",
             unexpectedParams: Object.keys(extraParams)
         });
     }
@@ -1125,10 +1125,9 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                     .map((cb) => ({
                         cbname: cb.cbname,
                         pms_des: cb.pms_des,
-                        planshudule: cb.planshudule,
-                        cretionDate: cb.creationDate,
-                        planEndDate: cb.planEndDate,
                         taskId: cb.taskId,
+                        planshudule: cb.planshudule,
+                        planEndDate: cb.planEndDate,
                         planstartDate: cb.planstartDate,
                     }));
             } else if (planType === 'Totalplan' || planType === 'Individual') {
@@ -1136,14 +1135,12 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                 filteredCbs = cbs.map((cb) => ({
                     cbname: cb.cbname,
                     pms_des: cb.pms_des,
-                    planshudule: cb.planshudule,
-                    cretionDate: cb.creationDate,
-                    planEndDate: cb.planEndDate,
                     taskId: cb.taskId,
+                    planshudule: cb.planshudule,
                     planstartDate: cb.planstartDate,
                     totalPlan: calculateDays(cb.planEndDate, cb.planstartDate),
-                    completePlan: calculateDays(new Date().toISOString().split('T')[0], cb.planstartDate),
                     pendingPlan: calculateDays(cb.planEndDate, new Date().toISOString().split('T')[0]),
+                    completePlan: calculateDays(new Date().toISOString().split('T')[0], cb.planstartDate),
                     // location: locationMapping[cb.name] || 'Unknown', // Fetch location for each cb
                     location: 'Unknown', // Fetch location for each cb
                 }));
@@ -1172,11 +1169,9 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
 function calculateDays(date1, date2) {
     const d1 = new Date(date1);
     const d2 = new Date(date2);
-    const diffInMs = d1 - d2;
+    const diffInMs = d1 - d2;    
     return Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
 }
-
-
 
 const PORT = 4000;
 app.listen(PORT, () => {
