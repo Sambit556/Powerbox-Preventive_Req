@@ -813,10 +813,10 @@ app.get('/getMappingData', async (req, res) => {
 
 app.get('/switchgear/:id/:switchgearId', async (req, res) => {
     const { id, switchgearId } = req.params;
-    const TableName = "Preventive_mappping_Storage"
+    const { taskId } = req.query; // Extract taskId from query parameters
+    const TableName = "Preventive_mappping_Storage";
 
     // DynamoDB params to fetch the data by customer_id
-
     const params = {
         TableName: TableName,
         Key: { customer_id: id },
@@ -829,7 +829,7 @@ app.get('/switchgear/:id/:switchgearId', async (req, res) => {
         // Retrieve data from DynamoDB
         const result = await ddb.get(params).promise();
 
-        // Ensure the 'Item' exists in the result from DynamoDB (the table is expected to return an 'Item' object)
+        // Ensure the 'Item' exists in the result from DynamoDB
         if (!result.Item) {
             return res.status(404).json({ error: "Customer don't mapped yet" });
         }
@@ -841,9 +841,33 @@ app.get('/switchgear/:id/:switchgearId', async (req, res) => {
         if (!switchgear) {
             return res.status(404).json({ error: "Switchgear don't mapped yet" });
         }
+
+        // If taskId is provided in query
+        if (taskId) {
+            const task = switchgear.cbs.find(cb => cb.taskId === taskId);
+            if (!task) {
+                return res.status(404).json({ error: "TaskId not found in this switchgear" });
+            }
+
+            // Return specific task details
+            return res.status(200).json({
+                message: "Task details fetched successfully.",
+                task: {
+                    taskId: task.taskId,
+                    cbname: task.cbname,
+                    pms_des: task.pms_des,
+                    planshudule: task.planshudule,
+                    fromDate: task.planstartDate,
+                    toDate: task.planEndDate,
+                    tasks: task.tasks,
+                },
+            });
+        }
+
+        // Return switchgear details if taskId is not provided
         const switchgearDetails = {
-            swiggearName: switchgear.swiggearName,
-            swiggearId: switchgear.swiggearId,
+            swiggearName: switchgear.switchgearName,
+            swiggearId: switchgear.switchgearId,
             cbs: switchgear.cbs.map(cb => ({
                 taskId: cb.taskId,
                 cbname: cb.cbname,
@@ -851,10 +875,10 @@ app.get('/switchgear/:id/:switchgearId', async (req, res) => {
                 planshudule: cb.planshudule,
                 fromDate: cb.planstartDate,
                 toDate: cb.planEndDate,
+                tasks: cb.tasks,
             })),
         };
 
-        // Return the switchgear data
         return res.status(200).json({
             message: "Mapped Switchgear fetched successfully.",
             switchgear: switchgearDetails,
