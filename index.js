@@ -1023,10 +1023,16 @@ app.delete('/switchgear/:id/:switchgearId/:taskId', async (req, res) => {
 
 app.get('/preservice/:table/:customer_id', async (req, res) => {
     const { table, customer_id } = req.params;
-    const { planType, scheduleType } = req.query; // Added scheduleType
+    const { planType, scheduleType, ...extraParams } = req.query; // Added scheduleType
     const tableName = "Preventive_mappping_Storage";
     const locationTableName = "switchgearConfig_Store"; // Table containing the location information
 
+    if (Object.keys(extraParams).length > 0) {
+        return res.status(400).json({
+            error: "Unexpected query parameters",
+            unexpectedParams: Object.keys(extraParams)
+        });
+    }
 
     // Validate inputs
     if (!table || !customer_id || !planType) {
@@ -1059,7 +1065,7 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
         //     }
         // };
         // const locationResult = await ddb.query(locationParams).promise();
-        
+
         // const locationMapping = {}; // Map cbname to location
 
         // Populate the location mapping from the location table result
@@ -1076,7 +1082,7 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
         //     });
         // });
         // locationResult.Items.forEach() => {
-            
+
         //     locationMapping[item.name] = item.location; // Assuming 'name' is cbname and 'location' is the location
         // });
         // Process each switchgear
@@ -1085,8 +1091,21 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
 
             let filteredCbs;
 
-            if (planType === 'Totalplan') {
-                // Keep all CBs for Totalplan
+            if (planType === 'Individual' && scheduleType) {
+                // Filter CBs based on the schedule type
+                filteredCbs = cbs
+                    .filter((cb) => cb.planshudule === scheduleType)
+                    .map((cb) => ({
+                        cbname: cb.cbname,
+                        pms_des: cb.pms_des,
+                        planshudule: cb.planshudule,
+                        cretionDate: cb.creationDate,
+                        planEndDate: cb.planEndDate,
+                        taskId: cb.taskId,
+                        planstartDate: cb.planstartDate,
+                    }));
+            } else if (planType === 'Totalplan' || planType === 'Individual') {
+                // Keep all CBs for Totalplan                
                 filteredCbs = cbs.map((cb) => ({
                     cbname: cb.cbname,
                     pms_des: cb.pms_des,
@@ -1101,19 +1120,6 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                     // location: locationMapping[cb.name] || 'Unknown', // Fetch location for each cb
                     location: 'Unknown', // Fetch location for each cb
                 }));
-            } else if (planType === 'Individual' && scheduleType) {
-                // Filter CBs based on the schedule type
-                filteredCbs = cbs
-                    .filter((cb) => cb.planshudule === scheduleType)
-                    .map((cb) => ({
-                        cbname: cb.cbname,
-                        pms_des: cb.pms_des,
-                        planshudule: cb.planshudule,
-                        cretionDate: cb.creationDate,
-                        planEndDate: cb.planEndDate,
-                        taskId: cb.taskId,
-                        planstartDate: cb.planstartDate,
-                    }));
             } else {
                 filteredCbs = [];
             }
