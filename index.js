@@ -786,20 +786,23 @@ app.get('/getMappingData', async (req, res) => {
         let allCBsTaskID = []
         // Aggregate CB data
         const matchingCBs = matchingSwitchgear.cbs.filter(cb => cb.cbname === cbName);
-        const planshudules = [...new Set(matchingCBs.map(cb => cb.planshudule))];
-        const today = new Date().toISOString().split("T")[0];
-        const cbCreatedTodayCount = matchingCBs.filter(cb => cb.cretionDate.startsWith(today)).length;
         matchingCBs.forEach(cb => {
             if (cb.taskId) {
                 allCBsTaskID.push(cb.taskId); // Push only the taskId
             }
         });
-
+        
+        const planshudules = [...new Set(matchingCBs.map(cb => cb.planshudule))];
+        const today = new Date().toISOString().split("T")[0];
+        const cbCreatedTodayCount = matchingCBs.filter(cb =>{
+            cb.cretionDate.startsWith(today).length;    
+        })
+    
         return res.status(200).json({
             message: "CB planshudule fetched successfully.",
             cbname: cbName,
             planshudule: planshudules,
-            count: cbCreatedTodayCount,
+            count: cbCreatedTodayCount == 0 ? 0 : cbCreatedTodayCount,
             allCBsTaskID: allCBsTaskID
         });
     } catch (error) {
@@ -1151,6 +1154,7 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
             if (filteredCbs.length > 0) {
                 response.switchgears.push({
                     switchgearId: switchgear.switchgearId,
+                    switchgearName: switchgear.switchgearName,
                     cbs: filteredCbs,
                 });
             }
