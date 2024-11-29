@@ -894,9 +894,9 @@ app.get('/switchgear/:id/:switchgearId', async (req, res) => {
 
 app.put('/switchgear/:id/:switchgearId/:taskId', async (req, res) => {
     const { id, switchgearId, taskId } = req.params;
-    const { fromDate, toDate } = req.body;
+    const { fromDate, toDate, tasks } = req.body;
 
-    const allowedFields = ['fromDate', 'toDate'];
+    const allowedFields = ['fromDate', 'toDate', 'tasks'];
     const TableName = "Preventive_mappping_Storage";
 
     // Validate request body fields
@@ -962,6 +962,9 @@ app.put('/switchgear/:id/:switchgearId/:taskId', async (req, res) => {
             taskToUpdate.planEndDate = toDate;
             updated = true;
         }
+       
+        // update the tasks and it's end-date's
+        if (taskToUpdate.tasks && tasks) taskToUpdate.tasks = tasks;
 
         // If nothing was updated
         if (!updated) {
