@@ -666,7 +666,7 @@ app.post("/insertmapData", async (req, res) => {
         // Iterate through the incoming switchgears array to update or add new data
         switchgears.forEach((newSwitchgear) => {
             const existingSwitchgear = switchgears_arr.find(
-                (sg) => sg.swiggearId === newSwitchgear.swiggearId
+                (sg) => sg.switchgearId === newSwitchgear.switchgearId
             );
 
             if (existingSwitchgear) {
