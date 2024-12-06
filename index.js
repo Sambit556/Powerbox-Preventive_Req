@@ -1168,6 +1168,162 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
     }
 });
 
+app.get("/Calandertasks", async (req, res) => {
+    const { customer_id, switchgearID, cbname, taskid } = req.query;
+    const TABLE_NAME ="Preventive_mappping_Storage"
+    // Validate input
+    if (!customer_id || !switchgearID || !cbname || !taskid) {
+        return res.status(400).json({ error: "Missing required parameters: custID, switchgearID, cbname, taskid" });
+    }
+
+    try {
+        // Fetch the customer from DynamoDB
+        const params = {
+            TableName: TABLE_NAME,
+            Key: { customer_id },
+        };
+
+        const result = await ddb.get(params).promise();
+
+        if (!result.Item) {
+            return res.status(404).json({ error: "Customer not found" });
+        }
+
+        // Validate switchgear
+        const switchgear = result.Item.switchgears.find(sg => sg.switchgearId === switchgearID);
+        if (!switchgear) {
+            return res.status(404).json({ error: "Switchgear not found" });
+        }
+
+        // Validate CB name and task ID
+        const cb = switchgear.cbs.find(cb => cb.cbname === cbname && cb.taskId === taskid);
+
+        if (!cb) {
+            return res.status(404).json({ error: "CB or Task not found" });
+        }
+
+        // Extract tasks object
+        const task = cb.tasks;
+        if (!task || task.length === 0) {
+            return res.status(404).json({ error: "No tasks found for the specified CB and Task ID" });
+        }
+
+        // Return tasks object
+        res.status(200).json({ tasks: task });
+    } catch (error) {
+        console.error("Error fetching data:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+app.post("/storecalTask", async (req, res) => {
+    const { customer_id, switchgearID, cbname, taskId, newTask } = req.body;
+    const TABLE_NAME ="calander_Tasks_Update"
+    // Validate input
+    if (!customer_id || !switchgearID || !cbname || !taskId || !newTask) {
+        return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    try {
+        // Fetch the customer from DynamoDB
+        const params = {
+            TableName: TABLE_NAME,
+            Key: { customer_id },
+        };
+
+        const result = await ddb.get(params).promise();
+
+        // If customer doesn't exist, create it
+        if (!result.Item) {
+            const newCustomer = {
+                customer_id,
+                switchgears: [
+                    {
+                        switchgearId: switchgearID,
+                        cbs: [
+                            {
+                                cbname,
+                                taskId,
+                                tasks: [newTask],
+                            },
+                        ],
+                    },
+                ],
+            };
+
+            const createParams = {
+                TableName: TABLE_NAME,
+                Item: newCustomer,
+            };
+
+            await ddb.put(createParams).promise();
+            return res.status(201).json({
+                message: "Customer, switchgear, CB, and task created successfully",
+                newCustomer,
+            });
+        }
+
+        // If customer exists, check for switchgear
+        const customer = result.Item;
+        let switchgear = customer.switchgears.find((sg) => sg.switchgearId === switchgearID);
+
+        if (!switchgear) {
+            // Add new switchgear
+            switchgear = {
+                switchgearId: switchgearID,
+                cbs: [
+                    {
+                        cbname,
+                        taskId,
+                        tasks: [newTask],
+                    },
+                ],
+            };
+
+            customer.switchgears.push(switchgear);
+        } else {
+            // Check for CB
+            let cb = switchgear.cbs.find((cb) => cb.cbname === cbname && cb.taskId === taskId);
+
+            if (!cb) {
+                // Add new CB
+                cb = {
+                    cbname,
+                    taskId,
+                    tasks: [newTask],
+                };
+
+                switchgear.cbs.push(cb);
+            } else {
+                // Add task to existing CB
+                cb.tasks.push(newTask);
+            }
+        }
+
+        // Update the customer in ddb
+        const updateParams = {
+            TableName: TABLE_NAME,
+            Key: { customer_id },
+            UpdateExpression: "set switchgears = :switchgears",
+            ExpressionAttributeValues: {
+                ":switchgears": customer.switchgears,
+            },
+            ReturnValues: "UPDATED_NEW",
+        };
+
+        const updateResult = await ddb.update(updateParams).promise();
+
+        res.status(200).json({
+            message: "Task added/updated successfully",
+            updatedCustomer: updateResult.Attributes,
+        });
+    } catch (error) {
+        console.error("Error updating ddb:", error);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+
 // Helper function to calculate the difference in days
 function calculateDays(date1, date2) {
     const d1 = new Date(date1);
