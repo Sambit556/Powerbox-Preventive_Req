@@ -1186,6 +1186,55 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
     }
 });
 // ---------------------------------------------------- calenders --------------------------------
+app.get('/api/planshadules', async (req, res) => {
+    const { customer_id, switchgearId, planshudule } = req.query;
+    const TABLE_NAME ="Preventive_mappping_Storage"
+    if (!customer_id) {
+        return res.status(400).json({ message: 'customer_id is required' });
+    }
+
+    try {
+        // Fetch data for the customer_id
+        const params = {
+            TableName: TABLE_NAME,
+            KeyConditionExpression: '#customer_id = :customer_id',
+            ExpressionAttributeNames: {
+                '#customer_id': 'customer_id'
+            },
+            ExpressionAttributeValues: {
+                ':customer_id': customer_id
+            }
+        };
+
+        const result = await ddb.query(params).promise();
+
+        if (result.Items.length === 0) {
+            return res.status(404).json({ message: 'Customer not found' });
+        }
+
+        let switchgears = result.Items[0].switchgears;
+
+        // Filter by switchgearId if provided
+        if (switchgearId) {
+            switchgears = switchgears.filter(s => s.switchgearId === switchgearId);
+        }
+
+        // Filter CBs by planshudule if provided
+        if (planshudule) {
+            switchgears = switchgears.map(s => {
+                s.cbs = s.cbs.filter(cb => cb.planshudule === planshudule);
+                return s;
+            });
+        }
+
+        res.json({ customer_id, switchgears });
+
+    } catch (error) {
+        console.error('Error fetching data from DynamoDB:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+// ------------------------------------------------------------
 app.get("/Calandertasks", async (req, res) => {
     const { customer_id, switchgearID, cbname, taskid } = req.query;
     const TABLE_NAME = "Preventive_mappping_Storage"
@@ -1405,7 +1454,6 @@ app.get('/getcalTask/:customer_id/:configure_Ts/:switchgearID?/:taskId?/:cbid?',
             });
         }
 
-        // If switchgearID is provided, filter the associated switchgears
         if (switchgearID) {
             filteredConfigurations = filteredConfigurations.map(config => {
                 const switchgears = config.switchgears.filter(switchgear => switchgear.switchgearID === switchgearID);
@@ -1413,23 +1461,35 @@ app.get('/getcalTask/:customer_id/:configure_Ts/:switchgearID?/:taskId?/:cbid?',
             }).filter(config => config.switchgears.length > 0);
         }
 
-        // If cbid is provided, filter the associated CBs
         if (taskId) {
             filteredConfigurations = filteredConfigurations.map(config => {
                 config.switchgears = config.switchgears.map(switchgear => {
                     switchgear.cbs = switchgear.cbs.map(cb => {
                         if (cb.taskId === taskId) {
-                            return cb;
+                            cb.tasks = cb.tasks.map(task => {
+                                task.subTasks = task.subTasks.map(subTask => {
+                                    subTask.reportReferenceNumber = ""; 
+                                    subTask.remarks = "";
+                                    subTask.status = ""; 
+                                    subTask.performedBy = ""; 
+
+                                    return subTask; 
+                                });
+
+                                return task; 
+                            });
+
+                            return cb; 
                         }
-                        return null; // Ignore CBs that don't match cbid
-                    }).filter(cb => cb !== null);
-                    return switchgear;
-                }).filter(switchgear => switchgear.cbs.length > 0);
-                return config;
-            }).filter(config => config.switchgears.length > 0);
+                        return null; 
+                    }).filter(cb => cb !== null); 
+                    return switchgear; 
+                }).filter(switchgear => switchgear.cbs.length > 0); 
+                return config; 
+            }).filter(config => config.switchgears.length > 0); 
         }
 
-        // If no data is found, return a 404
+
         if (filteredConfigurations.length === 0) {
             return res.status(404).send({
                 message: `No data found`
