@@ -2,6 +2,8 @@ const express = require('express');
 const AWS = require('aws-sdk');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const moment = require("moment");
+
 
 const app = express();
 app.use(cors({
@@ -341,6 +343,7 @@ app.post("/preventivetask", async (req, res) => {
     }
 
     try {
+        await checkTableExistence(tableName)
         // Prepare the item to save
         const item = {
             customer_id: customer_id,
@@ -376,6 +379,7 @@ app.get("/preventivetask/:customerId", async (req, res) => {
     }
 
     try {
+        await checkTableExistence(tableName)
         const getParams = {
             TableName: tableName,
             Key: {
@@ -414,6 +418,7 @@ app.put("/preventivetask/:customerId", async (req, res) => {
     }
 
     try {
+        await checkTableExistence(tableName)
         const getParams = {
             TableName: tableName,
             Key: {
@@ -503,6 +508,7 @@ app.delete("/preventivetask/:customerId", async (req, res) => {
         });
     }
     try {
+        await checkTableExistence(tableName)
         const getParams = {
             TableName: tableName,
             Key: {
@@ -519,13 +525,13 @@ app.delete("/preventivetask/:customerId", async (req, res) => {
         // Locate the task
         const tasks = data.Item.tasks;
         const taskIndex = tasks.findIndex((task) => task.id === tasks_id);
-        
+
         if (taskIndex === -1) {
             return res.status(404).json({ error: "Task not found." });
         }
 
         const task = tasks[taskIndex];
-        
+
         // Prevent deletion if the task is not custom
         if (!task.isCustom) {
             return res.status(400).json({
@@ -587,6 +593,7 @@ app.post('/getSubtasks', async (req, res) => {
     }
 
     try {
+        await checkTableExistence(tableName)
         // Fetch customer data from the database
         const params = {
             TableName: tableName,
@@ -1101,11 +1108,11 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
         // -----------------------
         switchgears.forEach((switchgear) => {
             // console.log(switchgear);
-            
+
             const cbs = switchgear.cbs || [];
 
             let filteredCbs;
-            
+
 
             if (planType === 'Individual') {
                 // Filter CBs based on the schedule type
@@ -1131,11 +1138,13 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                         pms_des: cb.pms_des,
                         taskId: cb.taskId,
                         planshudule: cb.planshudule,
+                        status: cb.status,
                         planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
                         totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
                         pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
                         completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
-                        location:  'Bengaluru',
+                        location: 'Bengaluru',
+                        approved: cb.approved ?? "No",
                     }));
             }
             else if (planType === 'Totalplan') {
@@ -1146,12 +1155,14 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                     pms_des: cb.pms_des,
                     taskId: cb.taskId,
                     planshudule: cb.planshudule,
+                    status: cb.status,
                     planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
                     totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
                     pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
                     completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
                     // location: locationMapping[`${cb.taskId}:${cb.cbname}`] || 'Bengaluru',
                     location: 'Bengaluru',
+                    approved: cb.approved ?? "No",
                 }));
             }
             else {
@@ -1491,7 +1502,7 @@ app.get('/getPlansByCustomer/:customer_id', async (req, res) => {
         res.status(500).json({ error: 'Unable to fetch data from DynamoDB' });
     }
 });
-
+//   ----------------------------------------------------------------- configure_Ts (Hardcoded)
 app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
     const { customer_id, switchgearID } = req.params;
     const { cbid } = req.query;
@@ -1533,12 +1544,23 @@ app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
 
         // Combine the data into arrays
         let calConfigurations = table1Result.Items.flatMap(item =>
-            item.configurations.filter(config =>
-                config.switchgears.some(sg => sg.switchgearID === switchgearID)
-            )
+            item.configurations
+                .map(config => ({
+                    ...config,
+                    switchgears: config.switchgears.filter(sg => sg.switchgearID == switchgearID)
+                }))
+                .filter(config => config.switchgears.length > 0) 
         );
-        let configSwitchgears = table2Result.Items.filter(item => item.configswitchgears.some(sg => sg.id === switchgearID));
-        let switchgearMappping = table3Result.Items.filter(item => item.switchgears.some(sg => sg.switchgearId === switchgearID));
+        
+        let configSwitchgears = table2Result.Items.map(item => ({
+            ...item,
+            configswitchgears: item.configswitchgears.filter(sg => sg.id === switchgearID) 
+        })).filter(item => item.configswitchgears.length > 0);
+
+        let switchgearMappping = table3Result.Items.map(item => ({
+            ...item,
+            switchgears: item.switchgears.filter(sg => sg.switchgearId === switchgearID) 
+        })).filter(item => item.switchgears.length > 0);
 
         let response = {}
 
@@ -1552,12 +1574,12 @@ app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
             if (!switchgear) {
                 return { success: false, message: `No switchgear found with ID: ${switchgearID} under configuration ${configure_Ts}` };
             }
-            const cbDetails = switchgear.cbs.find(cb => cb.cbid === Number(cbid));
+            const cbDetails = switchgear.cbs.find(cb => cb.cbid === cbid);
             if (!cbDetails) {
                 return { success: false, message: `No CB found with ID: ${cbid} under switchgear ${switchgearID}` };
             }
             return cbDetails
-        } // ok
+        }
 
         function configSwitchgearsfun(configSwitchgears, switchgearID, cbid) {
             // Iterate through configSwitchgears to find the matching switchgear and cb
@@ -1581,7 +1603,6 @@ app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
             }
         }
 
-
         function switchgearMapppingfun(switchgearMapping, switchgearId, cbid) {
             // Find the switchgear by switchgearId
             const switchgear = switchgearMapping.find(sg => sg.switchgears.some(sg => sg.switchgearId === switchgearId));
@@ -1603,9 +1624,8 @@ app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
             return cbDetails; // Return the found CB details
         }
 
-
         if (cbid) {
-            const configure_Ts = "2024-12-01";
+            const configure_Ts = "2024-12-16";
             // Filter or map circuit breaker details for the provided cbid
             calConfigurations = calConfigurationsfun(calConfigurations, configure_Ts, switchgearID, cbid);
             configSwitchgears = configSwitchgearsfun(configSwitchgears, switchgearID, cbid);
@@ -1636,6 +1656,262 @@ app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
         res.status(500).json({ message: "Internal Server Error", error });
     }
 });
+
+app.post('/saveAllData/:customer_id/:switchgearID', async (req, res) => {
+    const { customer_id, switchgearID } = req.params;
+
+    if (!customer_id || !switchgearID) {
+        return res.status(400).json({ message: "Missing customer_id or switchgearID in the request parameters." });
+    }
+
+    try {
+        // Query existing data for the customer
+        const queryParams = {
+            TableName: "customer_data_table",
+            KeyConditionExpression: "customer_id = :customer_id",
+            ExpressionAttributeValues: {
+                ":customer_id": customer_id
+            }
+        };
+        const existingDataResult = await ddb.query(queryParams).promise();
+
+        // Fetch data from the three tables
+        const table1Params = {
+            TableName: "calander_Tasks_Update",
+            KeyConditionExpression: "customer_id = :customer_id",
+            ExpressionAttributeValues: {
+                ":customer_id": customer_id
+            }
+        };
+        const table1Result = await ddb.query(table1Params).promise();
+
+        const table2Params = {
+            TableName: "switchgearConfig_Store",
+            KeyConditionExpression: "customer_id = :customer_id",
+            ExpressionAttributeValues: {
+                ":customer_id": customer_id
+            }
+        };
+        const table2Result = await ddb.query(table2Params).promise();
+
+        const table3Params = {
+            TableName: "Preventive_mappping_Storage",
+            KeyConditionExpression: "customer_id = :customer_id",
+            ExpressionAttributeValues: {
+                ":customer_id": customer_id
+            }
+        };
+        const table3Result = await ddb.query(table3Params).promise();
+
+        // Combine data
+        let calConfigurations = table1Result.Items.flatMap(item =>
+            item.configurations
+                .map(config => ({
+                    ...config,
+                    switchgears: config.switchgears.filter(sg => sg.switchgearID == switchgearID)
+                }))
+                .filter(config => config.switchgears.length > 0)
+        );
+
+        let configSwitchgears = table2Result.Items.map(item => ({
+            ...item,
+            configswitchgears: item.configswitchgears.filter(sg => sg.id === switchgearID)
+        })).filter(item => item.configswitchgears.length > 0);
+
+        let switchgearMappping = table3Result.Items.map(item => ({
+            ...item,
+            switchgears: item.switchgears.filter(sg => sg.switchgearId === switchgearID)
+        })).filter(item => item.switchgears.length > 0);
+
+        // Format new data to save
+        const configure_Ts = moment().format('YYYY-MM-DD');
+        const newSwitchgearData = {
+            switchgearID,
+            configure_Ts,
+            calConfigurations,
+            configSwitchgears,
+            switchgearMappping
+        };
+
+        // Check if the switchgearID already exists for the customer
+        let updatedData;
+        if (existingDataResult.Items.length > 0) {
+            const existingEntry = existingDataResult.Items[0];
+            let existingSwitchgears = existingEntry.switchgears || [];
+
+            // Replace or add new data for the given switchgearID
+            const switchgearIndex = existingSwitchgears.findIndex(sg => sg.switchgearID === switchgearID);
+            if (switchgearIndex !== -1) {
+                // Replace the existing switchgear data
+                existingSwitchgears[switchgearIndex] = newSwitchgearData;
+            } else {
+                // Add new switchgear data
+                existingSwitchgears.push(newSwitchgearData);
+            }
+
+            updatedData = {
+                ...existingEntry,
+                switchgears: existingSwitchgears
+            };
+        } else {
+            // Create new entry if no existing data found for the customer
+            updatedData = {
+                customer_id,
+                switchgears: [newSwitchgearData]
+            };
+        }
+
+        // Save the updated data to the table
+        const saveParams = {
+            TableName: "customer_data_table",
+            Item: updatedData
+        };
+        await ddb.put(saveParams).promise();
+
+        // Response
+        return res.status(201).json({
+            message: "Data successfully saved.",
+            data: updatedData
+        });
+
+    } catch (error) {
+        console.error("Error saving data:", error);
+        return res.status(500).json({ message: "Internal Server Error", error });
+    }
+});
+
+app.get('/customerdetails/:customer_id/:switchgearID', async (req, res) => {
+    try {
+        const { customer_id, switchgearID } = req.params;
+        const { cbid } = req.query;
+
+        if (!customer_id || !switchgearID) {
+            return res.status(400).json({ message: "Missing customer_id or switchgearID in query parameters." });
+        }
+        const Params = {
+            TableName: "customer_data_table",
+            KeyConditionExpression: "customer_id = :customer_id",
+            ExpressionAttributeValues: {
+                ":customer_id": customer_id
+            }
+        };
+
+        const result = await ddb.query(Params).promise();
+        let customer_data = result.Items;
+
+        const findSwitchgearDetails = (customer_data, customer_id, switchgearID) => {
+            for (const customer of customer_data) {
+                if (customer.customer_id == customer_id) {
+                    const matchedSwitchgear = customer.switchgears.find(sg => sg.switchgearID == switchgearID);
+                    if (matchedSwitchgear) {
+                        return matchedSwitchgear; 
+                    }
+                }
+            }
+            return null; 
+        };
+        let switchgearResponse = findSwitchgearDetails(customer_data, customer_id, switchgearID)
+        
+        if (!cbid) return res.status(200).json(switchgearResponse); 
+
+        function calConfigurationsfun(customer_data, configure_Ts, switchgearID, cbid) {
+            const configuration = customer_data.find(customer => customer.switchgears.some(sg => sg.configure_Ts === configure_Ts))?.switchgears.filter(config => config.configure_Ts === configure_Ts) || null;
+
+            if (!configuration) {
+                return { success: false, message: `No configuration found with configure_Ts: ${configure_Ts}` };
+            }
+            const switchgear = configuration.switchgears.find(sg => sg.switchgearID === switchgearID);
+            if (!switchgear) {
+                return { success: false, message: `No switchgear found with ID: ${switchgearID} under configuration ${configure_Ts}` };
+            }
+            const cbDetails = switchgear.cbs.find(cb => cb.cbid === cbid);
+            if (!cbDetails) {
+                return { success: false, message: `No CB found with ID: ${cbid} under switchgear ${switchgearID}` };
+            }
+            return cbDetails
+        }
+
+        function configSwitchgearsfun(customer_data, switchgearID, cbid) {
+            // Loop through the customers
+            const customer = customer_data.find(customer =>
+                customer.switchgears.some(sg => sg.switchgearID === switchgearID)
+            );
+
+            if (customer) {
+                // Find the switchgear that matches the switchgearID
+                const switchgear = customer.switchgears.find(sg => sg.switchgearID === switchgearID);
+
+                if (switchgear) {
+                    // Find the configSwitchgear matching the given switchgearID
+                    const configSwitchgear = switchgear.configSwitchgears.find(configSwitchgear =>
+                        configSwitchgear.name === switchgearID // Adjusted to use the 'name' field to match
+                    );
+
+                    if (configSwitchgear) {
+                        // Find the CB based on cbid and return it
+                        const cbDetails = configSwitchgear.configuredCBs.find(cb => cb.id === cbid);
+                        return cbDetails || null; // Return CB details if found, else return null
+                    }
+                }
+            }
+
+            return null; // If no matching switchgear or configSwitchgear is found, return null
+        }
+
+        function switchgearMapppingfun(customer_data, switchgearID, cbid) {
+            const customer = customer_data.find(customer =>
+                customer.switchgears.some(sg => sg.switchgearId === switchgearID)
+            );
+
+            if (!customer) {
+                return `No customer found with switchgearId: ${switchgearID}`;
+            }
+
+            const switchgearMapping = customer.switchgearMapping.find(mapping =>
+                mapping.switchgears.some(sg => sg.switchgearId === switchgearID)
+            );
+
+            if (!switchgearMapping) {
+                return `No switchgear mapping found with switchgearId: ${switchgearID}`;
+            }
+
+            // Find the matching switchgear
+            const matchingSwitchgear = switchgearMapping.switchgears.find(sg => sg.switchgearId === switchgearID);
+
+            if (!matchingSwitchgear) {
+                return `No switchgear found with switchgearId: ${switchgearID}`;
+            }
+
+            // Find the CB (Circuit Breaker) by cbid in the matching switchgear
+            const cbDetails = matchingSwitchgear.cbs.find(cb => cb.cbid === cbid);
+
+            if (!cbDetails) {
+                return `No CB found with cbid: ${cbid} under switchgear ${switchgearID}`;
+            }
+
+            return cbDetails; // Return the found CB details
+        }
+
+        const configure_Ts = "2024-12-16"
+        let calConfigurations = calConfigurationsfun(customer_data, configure_Ts, switchgearID, cbid);
+        let configSwitchgears = configSwitchgearsfun(customer_data, switchgearID, cbid);
+        let switchgearMappping = switchgearMapppingfun(customer_data, switchgearID, cbid);
+
+        let response = {
+            customer_id,
+            switchgearID,
+            calConfigurations,
+            configSwitchgears,
+            switchgearMappping
+        };
+        return res.status(200).json(response);
+
+    } catch (error) {
+        console.error("Error fetching customer details:", error);
+        return res.status(500).json({ message: "Internal Server Error", error });
+    }
+})
+
 function calculateDays(date1, date2) {
     const d1 = new Date(date1);
     const d2 = new Date(date2);
