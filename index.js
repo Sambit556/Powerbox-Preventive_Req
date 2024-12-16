@@ -519,13 +519,13 @@ app.delete("/preventivetask/:customerId", async (req, res) => {
         // Locate the task
         const tasks = data.Item.tasks;
         const taskIndex = tasks.findIndex((task) => task.id === tasks_id);
-
+        
         if (taskIndex === -1) {
             return res.status(404).json({ error: "Task not found." });
         }
 
         const task = tasks[taskIndex];
-
+        
         // Prevent deletion if the task is not custom
         if (!task.isCustom) {
             return res.status(400).json({
@@ -1088,6 +1088,7 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
             customer_id,
             switchgears: [],
         };
+        // ------------------------
         const locationParams = {
             TableName: locationTableName,
             KeyConditionExpression: 'customer_id = :customer_id',
@@ -1096,21 +1097,15 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
             }
         };
         const locationResult = await ddb.query(locationParams).promise();
-        
-        const locationMapping = {}; // Map cbname to location
-
-        locationResult.Items.forEach((item) => {
-            item.configswitchgears.forEach((switchgear) => {
-                switchgear.configuredCBs.forEach((cb) => {
-                    locationMapping[cb.cbname] = cb.location || 'Unknown';
-                });
-            });
-        });
-
+        // console.log(locationResult);
+        // -----------------------
         switchgears.forEach((switchgear) => {
+            // console.log(switchgear);
+            
             const cbs = switchgear.cbs || [];
 
             let filteredCbs;
+            
 
             if (planType === 'Individual') {
                 // Filter CBs based on the schedule type
@@ -1124,7 +1119,7 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                     planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
                     status: cb.status,
                     validation: cb.validation ?? "",
-                    approved: cb.approved ?? "",
+                    approved: cb.approved ?? "No",
                 }));
             }
             else if (planType === 'Totalplan' && scheduleType) {
@@ -1140,8 +1135,7 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                         totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
                         pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
                         completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
-                        location: locationMapping[cb.name] || 'Unknown', // Fetch location for each cb
-                        // location: 'Unknown', // Fetch location for each cb
+                        location:  'Bengaluru',
                     }));
             }
             else if (planType === 'Totalplan') {
@@ -1156,7 +1150,8 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
                     totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
                     pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
                     completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
-                    location: locationMapping[cb.cbname] || 'Unknown', // Fetch loc
+                    // location: locationMapping[`${cb.taskId}:${cb.cbname}`] || 'Bengaluru',
+                    location: 'Bengaluru',
                 }));
             }
             else {
@@ -1228,10 +1223,9 @@ app.get("/Calandertasks", async (req, res) => {
     }
 });
 
-
 app.get("/getTaskDetails", async (req, res) => {
     const { customer_id, switchgearId, cbname, taskId } = req.query;
-
+    const TABLE_NAME = "Preventive_mappping_Storage";
     // Validate input
     if (!customer_id || !switchgearId || !cbname || !taskId) {
         return res.status(400).json({ error: "Missing required query parameters: customer_id, switchgearId, cbname, taskId" });
