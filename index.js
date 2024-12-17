@@ -328,7 +328,7 @@ app.put('/updateCB/:id/:switchgearid/:cbId', async (req, res) => {
         console.error('Error updating circuit breaker:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
-});  // work
+}); 
 
 // -------------------------------------------------------------------------
 app.post("/preventivetask", async (req, res) => {
@@ -606,7 +606,6 @@ app.get('/getSubtasks', async (req, res) => {
         res.status(500).json({ error: 'Internal server error.' });
     }
 });
-// --------------------------------------------------------
 app.post("/insertmapData", async (req, res) => {
     const TABLE_NAME = "Preventive_mappping_Storage";
     try {
@@ -1151,6 +1150,177 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 });
+app.get('/testpreservice/:table/:customer_id', async (req, res) => {
+    const { table, customer_id } = req.params;
+    const { planType, scheduleType, ...extraParams } = req.query;
+
+    const preventiveTable = "Preventive_mappping_Storage";
+    const configurationTable = "switchgearConfig_Store";
+    const calendarTasksTable = "calander_Tasks_Update";  // Add the calendar tasks table
+
+    if (Object.keys(extraParams).length > 0) {
+        return res.status(400).json({
+            error: "Unexpected parameters",
+            unexpectedParams: Object.keys(extraParams)
+        });
+    }
+
+    if (!table || !customer_id || !planType) {
+        return res.status(400).json({
+            error: "'table', 'customer_id', and 'planType' are required."
+        });
+    }
+
+    try {
+        // Fetch customer data from the preventive table
+        const preventiveParams = {
+            TableName: preventiveTable,
+            Key: { customer_id },
+        };
+        const preventiveResult = await ddb.get(preventiveParams).promise();
+
+        if (!preventiveResult.Item) {
+            return res.status(404).json({ error: 'Customer not found in Preventive table' });
+        }
+
+        const switchgears = preventiveResult.Item.switchgears || [];
+
+        // Fetch configuration data from the configuration table
+        const configParams = {
+            TableName: configurationTable,
+            Key: { customer_id },
+        };
+        const configResult = await ddb.get(configParams).promise();
+
+        if (!configResult.Item) {
+            return res.status(404).json({ error: 'Customer not found in Configuration table' });
+        }
+
+        const configSwitchgears = configResult.Item.configswitchgears || [];
+
+        // Fetch calendar tasks from the calendar tasks update table
+        const calendarParams = {
+            TableName: calendarTasksTable,
+            Key: { customer_id },
+        };
+        const calendarResult = await ddb.get(calendarParams).promise();
+
+        if (!calendarResult.Item) {
+            return res.status(404).json({ error: 'Customer not found in Calendar Tasks Update table' });
+        }
+
+        const calendarConfigurations = calendarResult.Item.configurations || [];
+
+        const calculateDays = (date1, date2) => {
+            const diff = new Date(date1) - new Date(date2);
+            return Math.ceil(diff / (1000 * 60 * 60 * 24));
+        };
+
+        const convertToDate = (dateObj) =>
+            `${dateObj.year}-${String(dateObj.month).padStart(2, '0')}-${String(dateObj.day).padStart(2, '0')}`;
+
+        // Helper function to get status, validation, and approved values for a taskId
+        const getTaskDetails = (taskId) => {
+            for (const config of calendarConfigurations) {
+                for (const switchgear of config.switchgears) {
+                    for (const cb of switchgear.cbs) {
+                        if (cb.taskId === taskId) {
+                            // Return the first matching task details
+                            const task = cb.tasks[0].subTasks[0]; // Assuming one subtask per task
+                            return {
+                                status: task.status || "unknown",
+                                validation: task.validation ?? "invalid",
+                                approved: task.approved ?? "None"
+                            };
+                        }
+                    }
+                }
+            }
+            return { status: "unknown", validation: "invalid", approved: "None" }; // Default if not found
+        };
+
+        const matchLocation = (cbid) => {
+            for (const config of configSwitchgears) {
+                const cb = config.configuredCBs.find(cb => cb.id === cbid);
+                if (cb) return cb.location || 'Unknown Location';
+            }
+            return 'Unknown Location';
+        };
+
+        const filteredSwitchgears = switchgears.map((switchgear) => {
+            const cbs = switchgear.cbs || [];
+            let filteredCbs = [];
+
+            if (planType === 'Individual') {
+                filteredCbs = cbs.map((cb) => {
+                    const { status, validation, approved } = getTaskDetails(cb.taskId);
+                    return {
+                        cbname: cb.cbname,
+                        cbid: cb.cbid,
+                        pms_des: cb.pms_des,
+                        taskId: cb.taskId,
+                        planshudule: cb.planshudule,
+                        planEndDate: `${String(cb.planEndDate.month).padStart(2, '0')}-${String(cb.planEndDate.day).padStart(2, '0')}-${cb.planEndDate.year}`,
+                        planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
+                        status,
+                        validation,
+                        approved,
+                        location: matchLocation(cb.cbid),
+                    };
+                });
+            } else if (planType === 'Totalplan' && scheduleType) {
+                filteredCbs = cbs.filter((cb) => cb.planshudule === scheduleType).map((cb) => {
+                    const { status, validation, approved } = getTaskDetails(cb.taskId);
+                    return {
+                        cbname: cb.cbname,
+                        cbid: cb.cbid,
+                        pms_des: cb.pms_des,
+                        taskId: cb.taskId,
+                        planshudule: cb.planshudule,
+                        status,
+                        planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
+                        totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
+                        pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
+                        completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
+                        location: matchLocation(cb.cbid),
+                        approved,
+                    };
+                });
+            } else if (planType === 'Totalplan') {
+                filteredCbs = cbs.map((cb) => {
+                    const { status, validation, approved } = getTaskDetails(cb.taskId);
+                    return {
+                        cbname: cb.cbname,
+                        cbid: cb.cbid,
+                        pms_des: cb.pms_des,
+                        taskId: cb.taskId,
+                        planshudule: cb.planshudule,
+                        status,
+                        planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
+                        totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
+                        pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
+                        completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
+                        location: matchLocation(cb.cbid),
+                        approved,
+                    };
+                });
+            }
+
+            return { ...switchgear, cbs: filteredCbs };
+        });
+
+        const response = {
+            customer_id: preventiveResult.Item.customer_id,
+            switchgears: filteredSwitchgears,
+        };
+
+        return res.status(200).json(response);
+    } catch (err) {
+        console.error("Error:", err);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
 // ---------------------------------------------------- calenders --------------------------------
 app.get('/api/planshadules', async (req, res) => {
     const { customer_id, switchgearId, planshudule, planstartDate } = req.query;
@@ -1213,14 +1383,16 @@ app.get('/api/planshadules', async (req, res) => {
 // ------------------------------------------------------------
 app.get("/Calandertasks", async (req, res) => {
     const { customer_id, switchgearID, cbname, taskid } = req.query;
-    const TABLE_NAME = "Preventive_mappping_Storage"
+    const TABLE_NAME = "Preventive_mappping_Storage";
+    const CALENDAR_TABLE_NAME = "calander_Tasks_Update";  // Table for calendar tasks
+
     // Validate input
     if (!customer_id || !switchgearID || !cbname || !taskid) {
         return res.status(400).json({ error: "Missing required parameters: customer_id, switchgearID, cbname, taskid" });
     }
 
     try {
-        // Fetch the customer from DynamoDB
+        // Fetch the customer from Preventive_mappping_Storage table
         const params = {
             TableName: TABLE_NAME,
             Key: { customer_id },
@@ -1240,34 +1412,76 @@ app.get("/Calandertasks", async (req, res) => {
 
         // Validate CB name and task ID
         const cb = switchgear.cbs.find(cb => cb.cbname === cbname && cb.taskId === taskid);
-
         if (!cb) {
             return res.status(404).json({ error: "CB or Task not found" });
         }
 
-        // Extract tasks object
-        const task = cb.tasks;
-        if (!task || task.length === 0) {
-            return res.status(404).json({ error: "No tasks found for the specified CB and Task ID" });
+        // Fetch calendar task details from the calander_Tasks_Update table
+        const calendarParams = {
+            TableName: CALENDAR_TABLE_NAME,
+            Key: { customer_id },
+        };
+
+        const calendarResult = await ddb.get(calendarParams).promise();
+
+        if (!calendarResult.Item) {
+            return res.status(404).json({ error: "Customer not found in Calendar Tasks Update table" });
         }
 
-        task.map(task => {
+        const calendarConfigurations = calendarResult.Item.configurations || [];
+
+        const getTaskDetails = (taskId) => {
+            for (const config of calendarConfigurations) {
+                for (const switchgear of config.switchgears) {
+                    for (const cb of switchgear.cbs) {
+                        if (cb.taskId === taskId) {
+                            for (const task of cb.tasks) {
+                                for (const subTask of task.subTasks) {
+                                    if (subTask) {  
+                                        return {
+                                            reportRef: subTask.reportrefno || "",
+                                            remarks: subTask.remarks || "",
+                                            status: subTask.status || "",
+                                            performedBy: subTask.performedBy || "",
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Default return if no matching taskId found
+            return {
+                reportRef: "",
+                remarks: "",
+                status: "",
+                performedBy: "",
+            };
+        };
+
+        // Extract tasks and update with the details from the calendar table
+        const tasks = cb.tasks.map(task => {
+            const { reportRef, remarks, status, performedBy } = getTaskDetails(taskid);
+
             task.subTasks = task.subTasks.map(subTask => {
-                subTask.reportRef = "";
-                subTask.remarks = "";
-                subTask.status = "";
-                subTask.performedBy = "";
+                subTask.reportRef = reportRef;
+                subTask.remarks = remarks;
+                subTask.status = status;
+                subTask.performedBy = performedBy;
                 return subTask;
             });
-        })
+
+            return task;
+        });
 
         // Return tasks object
-        res.status(200).json({ tasks: task });
+        res.status(200).json({ tasks });
     } catch (error) {
         console.error("Error fetching data:", error);
         res.status(500).json({ error: "Internal server error" });
     }
-});  // work db connection
+});
 
 app.get("/getTaskDetails", async (req, res) => {
     const { customer_id, switchgearId, cbname, taskId } = req.query;
