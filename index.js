@@ -777,38 +777,39 @@ app.get('/getMappingData', async (req, res) => {
         };
         let allCBsTaskID = []
         const mapConfigResult = await ddb.get(mapConfigParams).promise();
+        
         if (!mapConfigResult.Item) {
             return res.status(200).json({ message: "No data found for the given customer_id in Map_ConfigTable.", count: 0, allCBsTaskID });
         }
-
-        // Search for the switchgear containing the CB
-        const matchingSwitchgear = mapConfigResult.Item.switchgears.find(
-            switchgear => switchgear.cbs && switchgear.cbs.some(cb => cb.cbname === cbName)
-        );
+        
+        const matchingSwitchgear = mapConfigResult.Item.switchgears.find(switchgear => {
+            if (switchgear.switchgearId === device_id) { 
+                return switchgear
+            }
+        });
 
         if (!matchingSwitchgear) {
             return res.status(200).json({ message: `No CB's planshudule found with name '${cbName}' in the switchgears`, count: 0, allCBsTaskID });
         }
-
+        
         // Aggregate CB data
         const matchingCBs = matchingSwitchgear.cbs.filter(cb => cb.cbname === cbName);
+        
         matchingCBs.forEach(cb => {
             if (cb.taskId) {
                 allCBsTaskID.push(cb.taskId); // Push only the taskId
             }
         });
-
-        const planshudules = [...new Set(matchingCBs.map(cb => cb.planshudule))];
+             
+        const planshudules = [...new Set(matchingCBs.map(cb => cb.planshudule))];       
         const today = new Date().toISOString().split("T")[0];
-        const cbCreatedTodayCount = matchingCBs.filter(cb => {
-            cb.creationDate.startsWith(today).length;
-        })
-
+        const cbCreatedTodayCount = matchingCBs.filter(cb => cb.creationDate.startsWith(today)).length;
+        
         return res.status(200).json({
             message: "CB planshudule fetched successfully.",
             cbname: cbName,
             planshudule: planshudules,
-            count: cbCreatedTodayCount == 0 ? 0 : cbCreatedTodayCount,
+            count: cbCreatedTodayCount,
             allCBsTaskID: allCBsTaskID
         });
     } catch (error) {
@@ -1548,7 +1549,7 @@ app.get('/getPlansByCustomer/:customer_id', async (req, res) => {
                             deviceName: sg.switchgearName,
                             status: "pending",
                             plType: cb.planshudule.replace(/_\d+$/i, ''),
-                            id: sg.switchgearID,
+                            id: sg.switchgearId,
                             title: `${sg.switchgearName}-${cb.planshudule}`
                         });
                     }
