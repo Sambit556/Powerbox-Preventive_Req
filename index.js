@@ -408,7 +408,7 @@ app.get("/preventivetask/:customerId", async (req, res) => {
 
 app.put("/preventivetask/:customerId", async (req, res) => {
     const { customerId } = req.params;
-    const { tasks_id, subTasks_id, updates } = req.body;
+    const { tasks_id, updates } = req.body;
     const tableName = "Preventive_mentainance_Storage";
 
     if (!customerId || !tasks_id || !updates) {
@@ -434,7 +434,7 @@ app.put("/preventivetask/:customerId", async (req, res) => {
 
         // Locate the task and subtask to update
         const tasks = data.Item.tasks;
-        const taskIndex = tasks.findIndex((task) => task.tasks_id === tasks_id);
+        const taskIndex = tasks.findIndex((task) => task.id === tasks_id);
 
         if (taskIndex === -1) {
             return res.status(404).json({ error: "Task not found." });
@@ -443,34 +443,16 @@ app.put("/preventivetask/:customerId", async (req, res) => {
         const task = tasks[taskIndex];
 
         // Prevent mainTask update if isCustom is false
-        if (!task.isCustom && updates.mainTask) {
+        if (!task.isCustom || updates.mainTask || updates.isCustom || updates.id) {
             return res.status(400).json({
-                error: "Cannot update 'Name' for this task.",
+                error: "Cannot update this field for this task.",
             });
         }
+        tasks[taskIndex] = {
+            ...task,
+            ...updates,
+        };
 
-        if (subTasks_id) {
-            // Update a specific subtask
-            const subTaskIndex = task.subTasks.findIndex(
-                (subTask) => subTask.subTasks_id === subTasks_id
-            );
-
-            if (subTaskIndex === -1) {
-                return res.status(404).json({ error: "Subtask not found." });
-            }
-
-            // Merge updates into the subtask
-            task.subTasks[subTaskIndex] = {
-                ...task.subTasks[subTaskIndex],
-                ...updates,
-            };
-        } else {
-            // Update the task itself
-            tasks[taskIndex] = {
-                ...task,
-                ...updates,
-            };
-        }
 
         // Update the record in DynamoDB
         const updateParams = {
@@ -499,7 +481,7 @@ app.put("/preventivetask/:customerId", async (req, res) => {
 
 app.delete("/preventivetask/:customerId", async (req, res) => {
     const { customerId } = req.params;
-    const { tasks_id, subTasks_id } = req.body;
+    const { tasks_id } = req.body;
     const tableName = "Preventive_mentainance_Storage";
 
     if (!customerId || !tasks_id) {
@@ -538,23 +520,8 @@ app.delete("/preventivetask/:customerId", async (req, res) => {
                 error: "Cannot delete task for this.",
             });
         }
-
-        if (subTasks_id) {
-            // Locate and delete a specific subtask
-            const subTaskIndex = task.subTasks.findIndex(
-                (subTask) => subTask.subTasks_id === subTasks_id
-            );
-
-            if (subTaskIndex === -1) {
-                return res.status(404).json({ error: "Subtask not found." });
-            }
-
-            // Remove the subtask from the subTasks array
-            task.subTasks.splice(subTaskIndex, 1);
-        } else {
-            // Delete the entire task
-            tasks.splice(taskIndex, 1);
-        }
+        // Delete the entire task
+        tasks.splice(taskIndex, 1);
 
         // Update the record in DynamoDB
         const updateParams = {
@@ -572,9 +539,7 @@ app.delete("/preventivetask/:customerId", async (req, res) => {
         const result = await ddb.update(updateParams).promise();
 
         res.status(200).json({
-            message: subTasks_id
-                ? "Subtask deleted successfully."
-                : "Task deleted successfully.",
+            message: "Task deleted successfully.",
             updatedData: result.Attributes,
         });
     } catch (err) {
@@ -584,7 +549,7 @@ app.delete("/preventivetask/:customerId", async (req, res) => {
 
 });
 // -------------------------------------------------
-app.post('/getSubtasks', async (req, res) => {
+app.get('/getSubtasks', async (req, res) => {
     const { customer_id, planSchedule } = req.body;
     const tableName = 'Preventive_mentainance_Storage';
 
@@ -777,13 +742,13 @@ app.get('/getMappingData', async (req, res) => {
         };
         let allCBsTaskID = []
         const mapConfigResult = await ddb.get(mapConfigParams).promise();
-        
+
         if (!mapConfigResult.Item) {
             return res.status(200).json({ message: "No data found for the given customer_id in Map_ConfigTable.", count: 0, allCBsTaskID });
         }
-        
+
         const matchingSwitchgear = mapConfigResult.Item.switchgears.find(switchgear => {
-            if (switchgear.switchgearId === device_id) { 
+            if (switchgear.switchgearId === device_id) {
                 return switchgear
             }
         });
@@ -791,20 +756,20 @@ app.get('/getMappingData', async (req, res) => {
         if (!matchingSwitchgear) {
             return res.status(200).json({ message: `No CB's planshudule found with name '${cbName}' in the switchgears`, count: 0, allCBsTaskID });
         }
-        
+
         // Aggregate CB data
         const matchingCBs = matchingSwitchgear.cbs.filter(cb => cb.cbname === cbName);
-        
+
         matchingCBs.forEach(cb => {
             if (cb.taskId) {
                 allCBsTaskID.push(cb.taskId); // Push only the taskId
             }
         });
-             
-        const planshudules = [...new Set(matchingCBs.map(cb => cb.planshudule))];       
+
+        const planshudules = [...new Set(matchingCBs.map(cb => cb.planshudule))];
         const today = new Date().toISOString().split("T")[0];
         const cbCreatedTodayCount = matchingCBs.filter(cb => cb.creationDate.startsWith(today)).length;
-        
+
         return res.status(200).json({
             message: "CB planshudule fetched successfully.",
             cbname: cbName,
@@ -1188,8 +1153,8 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
 });
 // ---------------------------------------------------- calenders --------------------------------
 app.get('/api/planshadules', async (req, res) => {
-    const { customer_id, switchgearId, planshudule } = req.query;
-    const TABLE_NAME ="Preventive_mappping_Storage"
+    const { customer_id, switchgearId, planshudule, planstartDate } = req.query;
+    const TABLE_NAME = "Preventive_mappping_Storage"
     if (!customer_id) {
         return res.status(400).json({ message: 'customer_id is required' });
     }
@@ -1224,6 +1189,16 @@ app.get('/api/planshadules', async (req, res) => {
         if (planshudule) {
             switchgears = switchgears.map(s => {
                 s.cbs = s.cbs.filter(cb => cb.planshudule === planshudule);
+                return s;
+            });
+        }
+
+        if (planstartDate) {
+            switchgears = switchgears.map(s => {
+                s.cbs = s.cbs.filter(cb => {
+                    const dateObj = `${cb.planStartDate.year}-${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}`;
+                    return dateObj === planstartDate;
+                });
                 return s;
             });
         }
@@ -1276,13 +1251,23 @@ app.get("/Calandertasks", async (req, res) => {
             return res.status(404).json({ error: "No tasks found for the specified CB and Task ID" });
         }
 
+        task.map(task => {
+            task.subTasks = task.subTasks.map(subTask => {
+                subTask.reportRef = "";
+                subTask.remarks = "";
+                subTask.status = "";
+                subTask.performedBy = "";
+                return subTask;
+            });
+        })
+
         // Return tasks object
         res.status(200).json({ tasks: task });
     } catch (error) {
         console.error("Error fetching data:", error);
         res.status(500).json({ error: "Internal server error" });
     }
-});
+});  // work db connection
 
 app.get("/getTaskDetails", async (req, res) => {
     const { customer_id, switchgearId, cbname, taskId } = req.query;
@@ -1467,29 +1452,15 @@ app.get('/getcalTask/:customer_id/:configure_Ts/:switchgearID?/:taskId?/:cbid?',
                 config.switchgears = config.switchgears.map(switchgear => {
                     switchgear.cbs = switchgear.cbs.map(cb => {
                         if (cb.taskId === taskId) {
-                            cb.tasks = cb.tasks.map(task => {
-                                task.subTasks = task.subTasks.map(subTask => {
-                                    subTask.reportReferenceNumber = ""; 
-                                    subTask.remarks = "";
-                                    subTask.status = ""; 
-                                    subTask.performedBy = ""; 
-
-                                    return subTask; 
-                                });
-
-                                return task; 
-                            });
-
-                            return cb; 
+                            return cb;
                         }
-                        return null; 
-                    }).filter(cb => cb !== null); 
-                    return switchgear; 
-                }).filter(switchgear => switchgear.cbs.length > 0); 
-                return config; 
-            }).filter(config => config.switchgears.length > 0); 
+                        return null; // Ignore CBs that don't match cbid
+                    }).filter(cb => cb !== null);
+                    return switchgear;
+                }).filter(switchgear => switchgear.cbs.length > 0);
+                return config;
+            }).filter(config => config.switchgears.length > 0);
         }
-
 
         if (filteredConfigurations.length === 0) {
             return res.status(404).send({
@@ -1527,7 +1498,7 @@ app.get('/getPlansByCustomer/:customer_id', async (req, res) => {
         data.Items.forEach(item => {
             item.switchgears.forEach(sg => {
                 sg.cbs.forEach(cb => {
-                    const existingCheckList = result.find(r => r.checkListType === cb.planshudule && r.deviceName === sg.switchgearName);
+                    const existingCheckList = result.find(r => r.checkListType === cb.planshudule && r.deviceName === sg.switchgearName && r.planStartDate === cb.planStartDate);
 
                     if (existingCheckList) {
                         existingCheckList.checkList.push({
@@ -1557,7 +1528,37 @@ app.get('/getPlansByCustomer/:customer_id', async (req, res) => {
             });
         });
 
-        res.json(result);
+        const mergedResult = {};
+
+        result.forEach(item => {
+            // Create a unique key based on the grouping criteria
+            const key = `${item.plannedDate}_${item.date}_${item.checkListType}_${item.id}_${item.custId}_${item.deviceName}`;
+
+            if (!mergedResult[key]) {
+                // Initialize the group if not already present
+                mergedResult[key] = {
+                    plannedDate: item.plannedDate,
+                    date: item.date,
+                    checkListType: item.checkListType,
+                    id: item.id,
+                    custId: item.custId,
+                    deviceName: item.deviceName,
+                    status: item.status,
+                    plType: item.plType,
+                    title: item.title,
+                    checkList: [] // Initialize empty checklist array
+                };
+            }
+
+            // Merge the checklist details
+            mergedResult[key].checkList.push(...item.checkList);
+        });
+
+        // Convert the merged result object back to an array
+        const finalResult = Object.values(mergedResult);
+
+
+        res.json(finalResult);
     } catch (error) {
         console.error('Error fetching data from DynamoDB:', error);
         res.status(500).json({ error: 'Unable to fetch data from DynamoDB' });
@@ -1610,17 +1611,17 @@ app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
                     ...config,
                     switchgears: config.switchgears.filter(sg => sg.switchgearID == switchgearID)
                 }))
-                .filter(config => config.switchgears.length > 0) 
+                .filter(config => config.switchgears.length > 0)
         );
-        
+
         let configSwitchgears = table2Result.Items.map(item => ({
             ...item,
-            configswitchgears: item.configswitchgears.filter(sg => sg.id === switchgearID) 
+            configswitchgears: item.configswitchgears.filter(sg => sg.id === switchgearID)
         })).filter(item => item.configswitchgears.length > 0);
 
         let switchgearMappping = table3Result.Items.map(item => ({
             ...item,
-            switchgears: item.switchgears.filter(sg => sg.switchgearId === switchgearID) 
+            switchgears: item.switchgears.filter(sg => sg.switchgearId === switchgearID)
         })).filter(item => item.switchgears.length > 0);
 
         let response = {}
@@ -1716,7 +1717,7 @@ app.get('/fetchallData/:customer_id/:switchgearID', async (req, res) => {
         console.error("Error fetching data:", error);
         res.status(500).json({ message: "Internal Server Error", error });
     }
-});
+});  // not used here
 
 app.post('/saveAllData/:customer_id/:switchgearID', async (req, res) => {
     const { customer_id, switchgearID } = req.params;
@@ -1844,7 +1845,7 @@ app.post('/saveAllData/:customer_id/:switchgearID', async (req, res) => {
 app.get('/customerdetails/:customer_id/:switchgearID', async (req, res) => {
     try {
         const { customer_id, switchgearID } = req.params;
-        const { cbid } = req.query;
+        const { cbid , taskId } = req.query;
 
         if (!customer_id || !switchgearID) {
             return res.status(400).json({ message: "Missing customer_id or switchgearID in query parameters." });
@@ -1865,107 +1866,156 @@ app.get('/customerdetails/:customer_id/:switchgearID', async (req, res) => {
                 if (customer.customer_id == customer_id) {
                     const matchedSwitchgear = customer.switchgears.find(sg => sg.switchgearID == switchgearID);
                     if (matchedSwitchgear) {
-                        return matchedSwitchgear; 
+                        return matchedSwitchgear;
                     }
                 }
             }
-            return null; 
+            return null;
         };
         let switchgearResponse = findSwitchgearDetails(customer_data, customer_id, switchgearID)
-        
-        if (!cbid) return res.status(200).json(switchgearResponse); 
 
-        function calConfigurationsfun(customer_data, configure_Ts, switchgearID, cbid) {
-            const configuration = customer_data.find(customer => customer.switchgears.some(sg => sg.configure_Ts === configure_Ts))?.switchgears.filter(config => config.configure_Ts === configure_Ts) || null;
+        // function calConfigurationsfun(customer_data, configure_Ts, switchgearID, cbid) {
+        //     const configuration = customer_data.find(customer => customer.switchgears.some(sg => sg.configure_Ts === configure_Ts))?.switchgears.filter(config => config.configure_Ts === configure_Ts) || null;
 
-            if (!configuration) {
-                return { success: false, message: `No configuration found with configure_Ts: ${configure_Ts}` };
+        //     if (!configuration) {
+        //         return { success: false, message: `No configuration found with configure_Ts: ${configure_Ts}` };
+        //     }
+        //     const switchgear = configuration.switchgears.find(sg => sg.switchgearID === switchgearID);
+        //     if (!switchgear) {
+        //         return { success: false, message: `No switchgear found with ID: ${switchgearID} under configuration ${configure_Ts}` };
+        //     }
+        //     const cbDetails = switchgear.cbs.find(cb => cb.cbid === cbid);
+        //     if (!cbDetails) {
+        //         return { success: false, message: `No CB found with ID: ${cbid} under switchgear ${switchgearID}` };
+        //     }
+        //     return cbDetails
+        // }
+
+        // function configSwitchgearsfun(customer_data, switchgearID, cbid) {
+        //     // Loop through the customers
+        //     const customer = customer_data.find(customer =>
+        //         customer.switchgears.some(sg => sg.switchgearID === switchgearID)
+        //     );
+
+        //     if (customer) {
+        //         // Find the switchgear that matches the switchgearID
+        //         const switchgear = customer.switchgears.find(sg => sg.switchgearID === switchgearID);
+
+        //         if (switchgear) {
+        //             // Find the configSwitchgear matching the given switchgearID
+        //             const configSwitchgear = switchgear.configSwitchgears.find(configSwitchgear =>
+        //                 configSwitchgear.name === switchgearID // Adjusted to use the 'name' field to match
+        //             );
+
+        //             if (configSwitchgear) {
+        //                 // Find the CB based on cbid and return it
+        //                 const cbDetails = configSwitchgear.configuredCBs.find(cb => cb.id === cbid);
+        //                 return cbDetails || null; // Return CB details if found, else return null
+        //             }
+        //         }
+        //     }
+
+        //     return null; // If no matching switchgear or configSwitchgear is found, return null
+        // }
+
+        // function switchgearMapppingfun(customer_data, switchgearID, cbid) {
+        //     const customer = customer_data.find(customer =>
+        //         customer.switchgears.some(sg => sg.switchgearId === switchgearID)
+        //     );
+
+        //     if (!customer) {
+        //         return `No customer found with switchgearId: ${switchgearID}`;
+        //     }
+
+        //     const switchgearMapping = customer.switchgearMapping.find(mapping =>
+        //         mapping.switchgears.some(sg => sg.switchgearId === switchgearID)
+        //     );
+
+        //     if (!switchgearMapping) {
+        //         return `No switchgear mapping found with switchgearId: ${switchgearID}`;
+        //     }
+
+        //     // Find the matching switchgear
+        //     const matchingSwitchgear = switchgearMapping.switchgears.find(sg => sg.switchgearId === switchgearID);
+
+        //     if (!matchingSwitchgear) {
+        //         return `No switchgear found with switchgearId: ${switchgearID}`;
+        //     }
+
+        //     // Find the CB (Circuit Breaker) by cbid in the matching switchgear
+        //     const cbDetails = matchingSwitchgear.cbs.find(cb => cb.cbid === cbid);
+
+        //     if (!cbDetails) {
+        //         return `No CB found with cbid: ${cbid} under switchgear ${switchgearID}`;
+        //     }
+
+        //     return cbDetails; // Return the found CB details
+        // }
+
+        // const configure_Ts = "2024-12-16"
+        // let calConfigurations = calConfigurationsfun(customer_data, configure_Ts, switchgearID, cbid);
+        // let configSwitchgears = configSwitchgearsfun(customer_data, switchgearID, cbid);
+        // let switchgearMappping = switchgearMapppingfun(customer_data, switchgearID, cbid);
+        if (cbid){
+            function extractCBDetailsById(switchgearResponse,cbid) {
+                const resultCBDetails = [];
+
+                // Traverse through the data
+                switchgearResponse.configSwitchgears.forEach((switchgear) => {
+                    switchgear.configswitchgears.forEach((configSwitchgear) => {                     
+                        configSwitchgear.configuredCBs.forEach((cb) => {
+                            if (cb.id == cbid) {
+                                resultCBDetails.push(cb);
+                            }
+                        });
+                    });
+                });
+
+                return resultCBDetails.length > 0 ? resultcalconfig : `No CB found with id: ${cbid}`;
             }
-            const switchgear = configuration.switchgears.find(sg => sg.switchgearID === switchgearID);
-            if (!switchgear) {
-                return { success: false, message: `No switchgear found with ID: ${switchgearID} under configuration ${configure_Ts}` };
-            }
-            const cbDetails = switchgear.cbs.find(cb => cb.cbid === cbid);
-            if (!cbDetails) {
-                return { success: false, message: `No CB found with ID: ${cbid} under switchgear ${switchgearID}` };
-            }
-            return cbDetails
+            
+            const cbDetails = extractCBDetailsById(switchgearResponse, cbid);
+            return res.status(200).json(cbDetails); 
         }
-
-        function configSwitchgearsfun(customer_data, switchgearID, cbid) {
-            // Loop through the customers
-            const customer = customer_data.find(customer =>
-                customer.switchgears.some(sg => sg.switchgearID === switchgearID)
-            );
-
-            if (customer) {
-                // Find the switchgear that matches the switchgearID
-                const switchgear = customer.switchgears.find(sg => sg.switchgearID === switchgearID);
-
-                if (switchgear) {
-                    // Find the configSwitchgear matching the given switchgearID
-                    const configSwitchgear = switchgear.configSwitchgears.find(configSwitchgear =>
-                        configSwitchgear.name === switchgearID // Adjusted to use the 'name' field to match
-                    );
-
-                    if (configSwitchgear) {
-                        // Find the CB based on cbid and return it
-                        const cbDetails = configSwitchgear.configuredCBs.find(cb => cb.id === cbid);
-                        return cbDetails || null; // Return CB details if found, else return null
-                    }
-                }
+        if (taskId){
+            const resultcalconfig =[]
+            const resultmapconfig =[]
+            function calConfigurationsfun(switchgearResponse, taskId) {
+                switchgearResponse.calConfigurations.forEach((switchgear) => {
+                    switchgear.switchgears.forEach((configSwitchgear) => {
+                        configSwitchgear.cbs.forEach((cb) => {   
+                            if (cb.taskId == taskId) {
+                                resultcalconfig.push(cb);
+                            }
+                        });
+                    });
+                });
+                return resultcalconfig.length > 0 ? resultcalconfig : `No CB found with id: ${taskId}`;
+            }
+            function switchgearMapppingfun(switchgearResponse, taskId) {
+                switchgearResponse.switchgearMappping.forEach((switchgear) => {
+                    switchgear.switchgears.forEach((configSwitchgear) => {
+                        configSwitchgear.cbs.forEach((cb) => {
+                            if (cb.taskId == taskId) {
+                                resultmapconfig.push(cb);
+                            }
+                        });
+                    });
+                });
+                return resultmapconfig.length > 0 ? resultmapconfig : `No CB found with id: ${taskId}`;
             }
 
-            return null; // If no matching switchgear or configSwitchgear is found, return null
+            const calConfigurations = calConfigurationsfun(switchgearResponse, taskId);
+            const switchgearMappping = switchgearMapppingfun(switchgearResponse, taskId);
+
+            return res.status(200).json({ message: 'Success', data: { calConfigurations, switchgearMappping } });
+ 
         }
-
-        function switchgearMapppingfun(customer_data, switchgearID, cbid) {
-            const customer = customer_data.find(customer =>
-                customer.switchgears.some(sg => sg.switchgearId === switchgearID)
-            );
-
-            if (!customer) {
-                return `No customer found with switchgearId: ${switchgearID}`;
-            }
-
-            const switchgearMapping = customer.switchgearMapping.find(mapping =>
-                mapping.switchgears.some(sg => sg.switchgearId === switchgearID)
-            );
-
-            if (!switchgearMapping) {
-                return `No switchgear mapping found with switchgearId: ${switchgearID}`;
-            }
-
-            // Find the matching switchgear
-            const matchingSwitchgear = switchgearMapping.switchgears.find(sg => sg.switchgearId === switchgearID);
-
-            if (!matchingSwitchgear) {
-                return `No switchgear found with switchgearId: ${switchgearID}`;
-            }
-
-            // Find the CB (Circuit Breaker) by cbid in the matching switchgear
-            const cbDetails = matchingSwitchgear.cbs.find(cb => cb.cbid === cbid);
-
-            if (!cbDetails) {
-                return `No CB found with cbid: ${cbid} under switchgear ${switchgearID}`;
-            }
-
-            return cbDetails; // Return the found CB details
-        }
-
-        const configure_Ts = "2024-12-16"
-        let calConfigurations = calConfigurationsfun(customer_data, configure_Ts, switchgearID, cbid);
-        let configSwitchgears = configSwitchgearsfun(customer_data, switchgearID, cbid);
-        let switchgearMappping = switchgearMapppingfun(customer_data, switchgearID, cbid);
 
         let response = {
-            customer_id,
-            switchgearID,
-            calConfigurations,
-            configSwitchgears,
-            switchgearMappping
-        };
-        return res.status(200).json(response);
+            switchgearResponse
+        }
+        return res.json(response);
 
     } catch (error) {
         console.error("Error fetching customer details:", error);
