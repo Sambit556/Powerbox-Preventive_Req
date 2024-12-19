@@ -1146,14 +1146,14 @@ app.get('/preservice/:table/:customer_id', async (req, res) => {
         console.error("Error:", err);
         return res.status(500).json({ error: 'Internal Server Error' });
     }
-});
+});  // not used
 app.get('/testpreservice/:table/:customer_id', async (req, res) => {
     const { table, customer_id } = req.params;
     const { planType, scheduleType, ...extraParams } = req.query;
 
     const preventiveTable = "Preventive_mappping_Storage";
     const configurationTable = "switchgearConfig_Store";
-    const calendarTasksTable = "calander_Tasks_Update";  // Add the calendar tasks table
+    const calendarTasksTable = "calander_Tasks_Update"; 
 
     if (Object.keys(extraParams).length > 0) {
         return res.status(400).json({
@@ -1222,7 +1222,7 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
         }
 
         // Helper function to get status, validation, and approved values for a taskId
-        const getTaskDetails = (taskId) => {
+        const getTaskDetails = (taskId, taskName) => {
             if (calendarConfigurations) {
                 for (const config of calendarConfigurations) {
                     for (const switchgear of config.switchgears) {
@@ -1231,11 +1231,13 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                                 for (const task of cb.tasks) {
                                     const results = [];
                                     task.subTasks.forEach(subTask => {
-                                        results.push({
-                                            status: subTask.status || "false",
-                                            validation: subTask.validation ?? "invalid",
-                                            approved: subTask.approved ?? "None"
-                                        });
+                                        if (subTask.name === taskName) {
+                                            results.push({
+                                                status: subTask.status || "no",
+                                                validation: subTask.validation ?? "no",
+                                                approved: subTask.approved ?? "no"
+                                            });
+                                        }
                                     });
 
                                     return results;
@@ -1246,7 +1248,7 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                     }
                 }
             }
-            return { status: "false", validation: "invalid", approved: "None" };
+            return { status: "not found", validation: "not found", approved: "not found" };
         };
 
         const matchLocation = (cbid, switchgearId) => {
@@ -1265,13 +1267,22 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
 
             if (planType === 'Individual') {
                 filteredCbs = cbs.map((cb) => {
-                    cb.tasks.map((task) => {
-                        task.subTasks.map((task) => {
-                            console.log(task.name);
-                        })
-                    })
-
-                    let { status, validation, approved } = getTaskDetails(cb.taskId);
+                    const fetchDetailsform_calander = [];
+                    cb.tasks.forEach((task) => {
+                        task.subTasks.forEach((subTask) => {
+                            const taskDetails = getTaskDetails(cb.taskId, subTask.name);
+                            if (taskDetails && Array.isArray(taskDetails)) {
+                                taskDetails.forEach((detail) => {
+                                    fetchDetailsform_calander.push({
+                                        status: detail.status ?? "no",
+                                        validation: detail.validation ?? "no",
+                                        approved: detail.approved ?? "no",
+                                    });
+                                });
+                            }
+                        });
+                    });
+                    
                     return {
                         cbname: cb.cbname,
                         cbid: cb.cbid,
@@ -1280,15 +1291,29 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                         planshudule: cb.planshudule,
                         planEndDate: `${String(cb.planEndDate.month).padStart(2, '0')}-${String(cb.planEndDate.day).padStart(2, '0')}-${cb.planEndDate.year}`,
                         planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
-                        status,
-                        validation,
-                        approved,
+                        fetchDetailsform_calander,
                         location: matchLocation(cb.cbid, switchgear.switchgearId),
                     };
                 });
-            } else if (planType === 'Totalplan' && scheduleType) {
-                filteredCbs = cbs.filter((cb) => cb.planshudule === scheduleType).map((cb) => {
-                    const { status, approved } = getTaskDetails(cb.taskId);
+
+            }
+            else if (planType === 'Totalplan' && scheduleType) {
+                filteredCbs = cbs.map((cb) => {
+                    const fetchDetailsform_calander = [];
+                    cb.tasks.forEach((task) => {
+                        task.subTasks.forEach((subTask) => {
+                            const taskDetails = getTaskDetails(cb.taskId, subTask.name);
+                            if (taskDetails && Array.isArray(taskDetails)) {
+                                taskDetails.forEach((detail) => {
+                                    fetchDetailsform_calander.push({
+                                        status: detail.status ?? "no",
+                                        validation: detail.validation ?? "no",
+                                        approved: detail.approved ?? "no",
+                                    });
+                                });
+                            }
+                        });
+                    });
                     return {
                         cbname: cb.cbname,
                         cbid: cb.cbid,
@@ -1297,11 +1322,12 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                         planshudule: cb.planshudule,
                         planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
                         totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate), convertToshudule(cb.planshudule)),
-                        pendingPlan: status,
+                        pendingPlan: "",
                         completePlan: "",
+                        fetchDetailsform_calander,
                         location: matchLocation(cb.cbid, switchgear.switchgearId),
-                        status,
-                        approved,
+                        status : "",
+                        approved : "",
                     };
                 });
             } else if (planType === 'Totalplan') {
@@ -1327,9 +1353,7 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                         location: matchLocation(cb.cbid, switchgear.switchgearId)
                     };
                 });
-
             }
-
             return { ...switchgear, cbs: filteredCbs };
         });
 
@@ -1377,7 +1401,7 @@ app.get('/api/planshadules', async (req, res) => {
         if (switchgearId) {
             switchgears = switchgears.filter(s => s.switchgearId === switchgearId);
         }
-        
+
         // Filter CBs by planshudule if provided
         if (planshudule) {
             switchgears = switchgears.map(s => {
@@ -2229,7 +2253,7 @@ function convertToDate(dateObj) {
     return dateObj; // If already in valid Date format
 }
 
-const PORT = 4000;
+const PORT = 3000;
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
