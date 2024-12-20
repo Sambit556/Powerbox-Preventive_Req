@@ -1021,139 +1021,13 @@ app.delete('/switchgear/:id/:switchgearId/:taskId', async (req, res) => {
     }
 });
 
-app.get('/preservice/:table/:customer_id', async (req, res) => {
-    const { table, customer_id } = req.params;
-    const { planType, scheduleType, ...extraParams } = req.query; // Added scheduleType
-    const tableName = "Preventive_mappping_Storage";
-    const locationTableName = "switchgearConfig_Store"; // Table containing the location information
-
-    if (Object.keys(extraParams).length > 0) {
-        return res.status(400).json({
-            error: "Unexpected parameters",
-            unexpectedParams: Object.keys(extraParams)
-        });
-    }
-
-    // Validate inputs
-    if (!table || !customer_id || !planType) {
-        return res.status(400).json({ error: "Both 'customer_id' and 'planType' are required" });
-    }
-
-    try {
-        // Fetch customer data from DynamoDB
-        const params = {
-            TableName: tableName,
-            Key: { customer_id },
-        };
-        const result = await ddb.get(params).promise();
-
-        // Check if customer exists
-        if (!result.Item) {
-            return res.status(404).json({ error: 'Customer not found' });
-        }
-
-        const switchgears = result.Item.switchgears || [];
-        let response = {
-            customer_id,
-            switchgears: [],
-        };
-        // ------------------------
-        const locationParams = {
-            TableName: locationTableName,
-            KeyConditionExpression: 'customer_id = :customer_id',
-            ExpressionAttributeValues: {
-                ':customer_id': customer_id,
-            }
-        };
-        const locationResult = await ddb.query(locationParams).promise();
-        // console.log(locationResult);
-        // -----------------------
-        switchgears.forEach((switchgear) => {
-            // console.log(switchgear);
-
-            const cbs = switchgear.cbs || [];
-
-            let filteredCbs;
-
-
-            if (planType === 'Individual') {
-                // Filter CBs based on the schedule type
-                filteredCbs = cbs.map((cb) => ({
-                    cbname: cb.cbname,
-                    cbid: cb.cbid,
-                    pms_des: cb.pms_des,
-                    taskId: cb.taskId,
-                    planshudule: cb.planshudule,
-                    planEndDate: `${String(cb.planEndDate.month).padStart(2, '0')}-${String(cb.planEndDate.day).padStart(2, '0')}-${cb.planEndDate.year}`,
-                    planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
-                    status: cb.status,
-                    validation: cb.validation ?? "",
-                    approved: cb.approved ?? "No",
-                }));
-            }
-            else if (planType === 'Totalplan' && scheduleType) {
-                // Keep all CBs for Totalplan                
-                filteredCbs = cbs.filter((cb) => cb.planshudule === scheduleType)
-                    .map((cb) => ({
-                        cbname: cb.cbname,
-                        cbid: cb.cbid,
-                        pms_des: cb.pms_des,
-                        taskId: cb.taskId,
-                        planshudule: cb.planshudule,
-                        status: cb.status,
-                        planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
-                        totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
-                        pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
-                        completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
-                        location: 'Bengaluru',
-                        approved: cb.approved ?? "No",
-                    }));
-            }
-            else if (planType === 'Totalplan') {
-                // Keep all CBs for Totalplan                
-                filteredCbs = cbs.map((cb) => ({
-                    cbname: cb.cbname,
-                    cbid: cb.cbid,
-                    pms_des: cb.pms_des,
-                    taskId: cb.taskId,
-                    planshudule: cb.planshudule,
-                    status: cb.status,
-                    planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
-                    totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate)),
-                    pendingPlan: calculateDays(convertToDate(cb.planEndDate), new Date().toISOString().split('T')[0]),
-                    completePlan: calculateDays(new Date().toISOString().split('T')[0], convertToDate(cb.planStartDate)),
-                    // location: locationMapping[`${cb.taskId}:${cb.cbname}`] || 'Bengaluru',
-                    location: 'Bengaluru',
-                    approved: cb.approved ?? "No",
-                }));
-            }
-            else {
-                filteredCbs = [];
-            }
-
-            if (filteredCbs.length > 0) {
-                response.switchgears.push({
-                    switchgearId: switchgear.switchgearId,
-                    switchgearName: switchgear.switchgearName,
-                    cbs: filteredCbs,
-                });
-            }
-        });
-
-        // Return the response
-        return res.status(200).json(response);
-    } catch (err) {
-        console.error("Error:", err);
-        return res.status(500).json({ error: 'Internal Server Error' });
-    }
-});
 app.get('/testpreservice/:table/:customer_id', async (req, res) => {
     const { table, customer_id } = req.params;
     const { planType, scheduleType, ...extraParams } = req.query;
 
     const preventiveTable = "Preventive_mappping_Storage";
     const configurationTable = "switchgearConfig_Store";
-    const calendarTasksTable = "calander_Tasks_Update";  // Add the calendar tasks table
+    const calendarTasksTable = "calander_Tasks_Update";
 
     if (Object.keys(extraParams).length > 0) {
         return res.status(400).json({
@@ -1222,7 +1096,7 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
         }
 
         // Helper function to get status, validation, and approved values for a taskId
-        const getTaskDetails = (taskId) => {
+        const getTaskDetails = (taskId, maintaskName, taskName) => {
             if (calendarConfigurations) {
                 for (const config of calendarConfigurations) {
                     for (const switchgear of config.switchgears) {
@@ -1230,24 +1104,41 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                             if (cb.taskId === taskId) {
                                 for (const task of cb.tasks) {
                                     const results = [];
-                                    task.subTasks.forEach(subTask => {
-                                        results.push({
-                                            status: subTask.status || "false",
-                                            validation: subTask.validation ?? "invalid",
-                                            approved: subTask.approved ?? "None"
+                                    if (task.mainTask === maintaskName) {
+                                        task.subTasks.forEach(subTask => {
+                                            if (subTask.name === taskName) {
+                                                results.push({
+                                                    status: subTask.status || "false",
+                                                    validation: subTask.validation ?? "false",
+                                                    comments: subTask.comments ?? "no"
+                                                });
+                                            }
                                         });
-                                    });
-
+                                    }
                                     return results;
-
                                 }
                             }
                         }
                     }
                 }
             }
-            return { status: "false", validation: "invalid", approved: "None" };
+            return { status: "not found", validation: "not found", comments: "not found" };
         };
+
+        const getsubTask_length = (taskId, mainTaskName) => {
+            for (const switchgear of switchgears) {
+                for (const cb of switchgear.cbs) {
+                    if (cb.taskId === taskId) {
+                        for (const task of cb.tasks) {
+                            if (task.mainTask === mainTaskName) {
+                                return task.subTasks ? task.subTasks.length : 0;
+                            }
+                        }
+                    }
+                }
+            }
+            return length;
+        }
 
         const matchLocation = (cbid, switchgearId) => {
             for (const config of configSwitchgears) {
@@ -1265,13 +1156,30 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
 
             if (planType === 'Individual') {
                 filteredCbs = cbs.map((cb) => {
-                    cb.tasks.map((task) => {
-                        task.subTasks.map((task) => {
-                            console.log(task.name);
-                        })
-                    })
-
-                    let { status, validation, approved } = getTaskDetails(cb.taskId);
+                    const fetchDetailsform_calander = [];
+                    cb.tasks.forEach((task) => {
+                        task.subTasks.forEach((subTask) => {
+                            const taskDetails = getTaskDetails(cb.taskId, task.mainTask, subTask.name);
+                            if (taskDetails && Array.isArray(taskDetails)) {
+                                taskDetails.forEach((detail) => {
+                                    fetchDetailsform_calander.push({
+                                        status: detail.status ?? "no status",
+                                        validation: detail.validation ?? "no validation",
+                                        comments: detail.comments ?? "no comments",
+                                    });
+                                });
+                            }
+                        });
+                    });
+                    let status, validation;
+                    if (Array.isArray(fetchDetailsform_calander) && fetchDetailsform_calander.length > 0) {
+                        status = fetchDetailsform_calander.every((item) => item.status === true)
+                            ? "completed"
+                            : "pending";
+                        validation = fetchDetailsform_calander.every(item => item.validation === true)
+                            ? "Valid"
+                            : "Invalid";
+                    }
                     return {
                         cbname: cb.cbname,
                         cbid: cb.cbid,
@@ -1280,15 +1188,78 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                         planshudule: cb.planshudule,
                         planEndDate: `${String(cb.planEndDate.month).padStart(2, '0')}-${String(cb.planEndDate.day).padStart(2, '0')}-${cb.planEndDate.year}`,
                         planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
-                        status,
-                        validation,
-                        approved,
+                        status: status ?? 'pending',
+                        validation: validation ?? 'Invalid',
                         location: matchLocation(cb.cbid, switchgear.switchgearId),
                     };
                 });
-            } else if (planType === 'Totalplan' && scheduleType) {
-                filteredCbs = cbs.filter((cb) => cb.planshudule === scheduleType).map((cb) => {
-                    const { status, approved } = getTaskDetails(cb.taskId);
+
+            }
+            else if (planType === 'Totalplan' && scheduleType) {
+                filteredCbs = cbs
+                    .filter((cb) => cb.planshudule === scheduleType)
+                    .map((cb) => {
+                        const fetchDetailsform_calander = [];
+                        let subTask_length = 0
+                        cb.tasks.forEach((task) => {
+                            task.subTasks.forEach((subTask) => {
+                                const taskDetails = getTaskDetails(cb.taskId, task.mainTask, subTask.name);
+                                subTask_length = getsubTask_length(cb.taskId, task.mainTask);
+                                if (taskDetails && Array.isArray(taskDetails)) {
+                                    taskDetails.forEach((detail) => {
+                                        fetchDetailsform_calander.push({
+                                            status: detail.status ?? "no status",
+                                            validation: detail.validation ?? "no validation",
+                                            comments: detail.comments ?? "no comments",
+                                        });
+                                    });
+                                }
+                            });
+                        });
+
+                        let pendingPlan, completePlan;
+                        if (Array.isArray(fetchDetailsform_calander) && fetchDetailsform_calander.length > 0) {
+                            pendingPlan = fetchDetailsform_calander.filter(item => item.status === false).length;
+                            completePlan = fetchDetailsform_calander.filter(item => item.status === true).length;
+                        }
+                        return {
+                            cbname: cb.cbname,
+                            cbid: cb.cbid,
+                            pms_des: cb.pms_des,
+                            taskId: cb.taskId,
+                            planshudule: cb.planshudule,
+                            planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
+                            totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate), convertToshudule(cb.planshudule)),
+                            pendingPlan: pendingPlan ?? subTask_length,
+                            completePlan: completePlan ?? 0,
+                            location: matchLocation(cb.cbid, switchgear.switchgearId)
+                        };
+                    });
+            } else if (planType === 'Totalplan') {
+                filteredCbs = cbs.map((cb) => {
+                    const fetchDetailsform_calander = [];
+                    let subTask_length = 0;
+                    cb.tasks.forEach((task) => {
+                        task.subTasks.forEach((subTask) => {
+                            const taskDetails = getTaskDetails(cb.taskId, task.mainTask, subTask.name);
+                            subTask_length = getsubTask_length(cb.taskId, task.mainTask);
+                            if (taskDetails && Array.isArray(taskDetails)) {
+                                taskDetails.forEach((detail) => {
+                                    fetchDetailsform_calander.push({
+                                        status: detail.status ?? "no status",
+                                        validation: detail.validation ?? "no validation",
+                                        comments: detail.comments ?? "no comments",
+                                    });
+                                });
+                            }
+                        });
+                    });
+
+                    let pendingPlan, completePlan;
+                    if (Array.isArray(fetchDetailsform_calander) && fetchDetailsform_calander.length > 0) {
+                        pendingPlan = fetchDetailsform_calander.filter(item => item.status === false).length;
+                        completePlan = fetchDetailsform_calander.filter(item => item.status === true).length;
+                    }
                     return {
                         cbname: cb.cbname,
                         cbid: cb.cbid,
@@ -1297,39 +1268,12 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
                         planshudule: cb.planshudule,
                         planStartDate: `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`,
                         totalPlan: calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate), convertToshudule(cb.planshudule)),
-                        pendingPlan: status,
-                        completePlan: "",
-                        location: matchLocation(cb.cbid, switchgear.switchgearId),
-                        status,
-                        approved,
-                    };
-                });
-            } else if (planType === 'Totalplan') {
-                filteredCbs = cbs.map((cb) => {
-                    const { status, approved } = getTaskDetails(cb.taskId);
-                    const planStartDate = `${String(cb.planStartDate.month).padStart(2, '0')}-${String(cb.planStartDate.day).padStart(2, '0')}-${cb.planStartDate.year}`;
-                    const totalPlan = calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate), convertToshudule(cb.planshudule));
-                    const pendingPlan = status === "false"
-                        ? calculateDays(convertToDate(cb.planEndDate), convertToDate(cb.planStartDate), convertToshudule(cb.planshudule))
-                        : 0;
-                    const completePlan = totalPlan - pendingPlan;
-
-                    return {
-                        cbname: cb.cbname,
-                        cbid: cb.cbid,
-                        pms_des: cb.pms_des,
-                        taskId: cb.taskId,
-                        planshudule: cb.planshudule,
-                        planStartDate,
-                        totalPlan,
-                        pendingPlan,
-                        completePlan,
+                        pendingPlan: pendingPlan ?? subTask_length,
+                        completePlan: completePlan ?? 0,
                         location: matchLocation(cb.cbid, switchgear.switchgearId)
                     };
                 });
-
             }
-
             return { ...switchgear, cbs: filteredCbs };
         });
 
@@ -1343,7 +1287,7 @@ app.get('/testpreservice/:table/:customer_id', async (req, res) => {
         console.error("Error:", err);
         return res.status(500).json({ error: 'Internal Server Error' });
     }
-});
+});  // not chnaged
 
 // ---------------------------------------------------- calenders --------------------------------
 app.get('/api/planshadules', async (req, res) => {
@@ -1377,7 +1321,7 @@ app.get('/api/planshadules', async (req, res) => {
         if (switchgearId) {
             switchgears = switchgears.filter(s => s.switchgearId === switchgearId);
         }
-        
+
         // Filter CBs by planshudule if provided
         if (planshudule) {
             switchgears = switchgears.map(s => {
@@ -1446,22 +1390,24 @@ app.get("/Calandertasks", async (req, res) => {
 
         const calendarConfigurations = calendarResult.Item?.configurations || [];
 
-        const getTaskDetailsForSubTask = (taskId, subTaskName) => {
+        const getTaskDetailsForSubTask = (taskId, mainTaskName, subTaskName) => {
             if (calendarResult) {
                 for (const config of calendarConfigurations) {
                     for (const switchgear of config.switchgears) {
                         for (const cb of switchgear.cbs) {
                             if (cb.taskId === taskId) {
                                 for (const task of cb.tasks) {
-                                    for (const subTask of task.subTasks) {
-                                        if (subTask.name === subTaskName) {
-                                            return {
-                                                reportRef: subTask.reportRef || "",
-                                                remarks: subTask.remarks || "",
-                                                status: subTask.status || "",
-                                                performedBy: subTask.performedBy || "",
-                                                comments: subTask.comments || "",
-                                            };
+                                    if (task.mainTask === mainTaskName) {
+                                        for (const subTask of task.subTasks) {
+                                            if (subTask.name === subTaskName) {
+                                                return {
+                                                    reportRef: subTask.reportRef || "",
+                                                    remarks: subTask.remarks || "",
+                                                    status: subTask.status || "",
+                                                    performedBy: subTask.performedBy || "",
+                                                    comments: subTask.comments || "",
+                                                };
+                                            }
                                         }
                                     }
                                 }
@@ -1483,7 +1429,7 @@ app.get("/Calandertasks", async (req, res) => {
         // Update all subTasks for the CB
         const mappedTasks = cb.tasks.map(task => {
             task.subTasks = task.subTasks.map(subTask => {
-                const { reportRef, remarks, status, performedBy, comments } = getTaskDetailsForSubTask(taskid, subTask.name);
+                const { reportRef, remarks, status, performedBy, comments } = getTaskDetailsForSubTask(taskid, task.mainTask, subTask.name);
                 subTask.reportRef = reportRef;
                 subTask.remarks = remarks;
                 subTask.status = status;
@@ -1609,14 +1555,31 @@ app.post("/storecalTask", async (req, res) => {
                                     );
 
                                     if (existingTask) {
-                                        Object.assign(existingTask, newTask);
+                                        newTask.subTasks.forEach((newSubTask) => {
+                                            const existingSubTask = existingTask.subTasks.find(
+                                                (subTask) => subTask.name === newSubTask.name
+                                            );
+
+                                            if (existingSubTask) {
+                                                Object.assign(existingSubTask, newSubTask);
+                                            } else {
+                                                existingTask.subTasks.push(newSubTask);
+                                            }
+                                        });
+
+                                        Object.assign(existingTask, {
+                                            ...newTask,
+                                            subTasks: existingTask.subTasks,
+                                        });
                                     } else {
                                         existingCb.tasks.push(newTask);
                                     }
                                 });
                             } else {
+                                // Add new CB if no matching CB found
                                 existingSwitchgear.cbs.push(newCb);
                             }
+
                         });
                     } else {
                         existingConfig.switchgears.push(newSwitchgear);
@@ -2214,20 +2177,6 @@ app.get('/customerdetails/:customer_id/:switchgearID', async (req, res) => {
         return res.status(500).json({ message: "Internal Server Error", error });
     }
 })
-
-function calculateDays(date1, date2) {
-    const d1 = new Date(date1);
-    const d2 = new Date(date2);
-    const diffInMs = d1 - d2;
-    return Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
-}
-
-function convertToDate(dateObj) {
-    if (typeof dateObj === 'object' && dateObj.year && dateObj.month && dateObj.day) {
-        return new Date(dateObj.year, dateObj.month - 1, dateObj.day); // Month is 0-indexed
-    }
-    return dateObj; // If already in valid Date format
-}
 
 const PORT = 4000;
 app.listen(PORT, () => {
